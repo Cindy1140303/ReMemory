@@ -1,0 +1,51 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/*.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "www/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/health",
+      "dest": "/api/health.py"
+    },
+    {
+      "src": "/api/memories",
+      "dest": "/api/memories.py"
+    },
+    {
+      "src": "/api/memories/(.*)",
+      "dest": "/api/memories.py"
+    },
+    {
+      "src": "/api/audio",
+      "dest": "/api/audio.py"
+    },
+    {
+      "src": "/api/audio/(.*)",
+      "dest": "/api/audio.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/www/$1"
+    }
+  ],
+  "env": {
+    "DB_TYPE": "mongodb",
+    "MONGODB_URI": "mongodb+srv://rememoryfju2025_db_user:AgAOvGRB5wlzHCje@cluster0.yvl3ug4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0",
+    "DATABASE_TYPE": "mongodb",
+    "MONGODB_DB_NAME": "lifemap",
+    "GEMINI_API_KEY": "AIzaSyDD4JJV91yOm7NFm6AM3r3ZA-RYJiBp_7M"
+  },
+  "functions": {
+    "api/*.py": {
+      "maxDuration": 60
+    }
+  }
+}
