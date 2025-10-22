@@ -1,0 +1,24 @@
+{
+  "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/cli": "^7.4.3",
+    "@capacitor/core": "^7.4.3"
+  },
+  "name": "re-memory-app",
+  "version": "1.0.0",
+  "description": "Re Memory - AI 角色聊天與生命地圖應用",
+  "main": "index.js",
+  "scripts": {
+    "dev": "python run_server.py",
+    "build": "echo 'Static files ready'",
+    "deploy": "vercel --prod",
+    "deploy:local": "deploy.bat",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["memory", "ai", "chat", "lifemap", "vercel", "mongodb"],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=14.x"
+  }
+}

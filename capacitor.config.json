@@ -1,0 +1,13 @@
+{
+  "appId": "com.lifemap.app",
+  "appName": "Re Memory",
+  "webDir": "www",
+  "plugins": {
+    "Camera": {
+      "permissions": ["camera", "photos"]
+    },
+    "Filesystem": {
+      "permissions": ["documents"]
+    }
+  }
+}

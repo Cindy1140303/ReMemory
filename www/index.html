@@ -1,0 +1,3902 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>Re Memory｜AI角色・聊天・生命地圖</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Capacitor 核心和插件 -->
+  <script type="module" src="https://unpkg.com/@capacitor/core@latest/dist/capacitor.js"></script>
+  <script type="module" src="https://unpkg.com/@capacitor/camera@latest/dist/plugin.js"></script>
+  <script type="module" src="https://unpkg.com/@capacitor/filesystem@latest/dist/plugin.js"></script>
+  <script type="module" src="https://unpkg.com/@capacitor/preferences@latest/dist/plugin.js"></script>
+
+  <style>
+  body{background:#eaeff4;font-family:"Inter","Microsoft JhengHei",system-ui;overflow:hidden}
+  .screen{position:absolute;inset:0;display:flex;flex-direction:column}
+    .hidden{display:none}
+  /* 強制手機尺寸（桌面版只顯示手機視窗） */
+  .h-app{width:360px;height:640px;background:#fff;border-radius:1.5rem;overflow:hidden;box-shadow:0 25px 50px -12px rgba(0,0,0,.25);position:relative}
+  /* 可選的外框樣式，讓在桌面上更像手機裝置 */
+  .device-frame { padding: 18px; display:flex; align-items:center; justify-content:center; height:100vh; box-sizing:border-box }
+  
+  /* 真實手機環境下填滿整個螢幕 */
+  @media (max-width: 480px) and (pointer: coarse) {
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+    }
+    .device-frame { 
+      padding: 0; 
+      margin: 0;
+      height: 100vh;
+      width: 100vw;
+    }
+    .h-app { 
+      width: 100vw; 
+      height: 100vh; 
+      border-radius: 0 !important; 
+      box-shadow: none; 
+      max-width: none;
+      max-height: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+    #main-header {
+      border-radius: 0 !important;
+      border-top-left-radius: 0 !important;
+      border-top-right-radius: 0 !important;
+    }
+    /* 保持按鈕圓角 */
+    button {
+      border-radius: 0.5rem !important;
+    }
+    .rounded-xl {
+      border-radius: 0.75rem !important;
+    }
+    .card {
+      border-radius: 1rem !important;
+    }
+  }
+    #map{width:100%;height:30vh;border-radius:0.5rem}
+    .timeline{display:flex;align-items:center;justify-content:center;gap:48px;padding:12px 0;border-top:3px solid #a6622e;background:#fff}
+    .timeline-dot{width:20px;height:20px;border-radius:50%;background:#a6622e}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:8px;cursor:pointer;transition:transform .12s ease, box-shadow .12s ease}
+    .card:hover{transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.12)}
+    .card img {
+      width: 100%;
+      height: auto;            /* 不固定高度，保持原比例 */
+      image-rendering: crisp-edges;  /* 🧡讓像素銳利 */
+      image-rendering: -webkit-optimize-contrast;
+      border-radius: 12px;
+    }
+    /* 🔧 修正地圖層級，確保彈窗浮在最上層 */
+    #map {
+      z-index: 10 !important;
+    }
+    #map-view button {
+      position: relative;
+      z-index: 400; /* ✅ 讓按鈕浮在地圖上 */
+      pointer-events: auto;
+    }
+
+    #chat-view .flex.flex-col.items-center.gap-4.p-4.overflow-y-auto.flex-1.mt-\[56px\] {
+      flex: 0 0 auto !important;
+      min-height: 260px !important;
+      align-items: center !important;
+      justify-content: flex-start !important;
+      overflow: visible !important;
+    }
+
+    .character-container {
+      width: 180px !important;
+      height: 180px !important;
+      min-width: 180px !important;
+      min-height: 180px !important;
+      flex-shrink: 0 !important;
+      flex-grow: 0 !important;
+      display: flex !important;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .character-container img {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
+      object-position: center top !important;
+      border-radius: 50% !important;
+    }
+
+    #chat-box {
+      flex-grow: 1 !important;
+      min-height: 220px !important;
+      overflow-y: auto !important;
+    }
+
+
+    /* === 底部時間軸 === */
+  .timeline-bottom {
+      position: relative;
+      bottom: 40px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 40px;
+  /* 保持在小卡之上但不凌駕於 modal */
+      z-index: 6000;
+      align-items: flex-start; /* ✅ 讓圓點靠上對齊線條 */
+      pointer-events: auto;
+      background: rgba(255, 255, 255, 0.0); /* ✅ 完全透明 */
+      height: auto;        /* ✅ 取消固定高度，避免擠壓 */
+      padding: 6px 40px;
+      overflow-x: auto;              /* ✅ 允許橫向滾動 */
+      scroll-behavior: smooth;       /* ✅ 平滑滾動 */
+      scrollbar-width: none;         /* ✅ 隱藏卷軸（Firefox） */
+    }
+    .timeline-bottom::-webkit-scrollbar {
+      display: none; /* ✅ 隱藏卷軸（Chrome） */
+    }
+
+
+    /* === 節點樣式 === */
+  .timeline-dot {
+      flex: none;           /* ✅ 不被 flex 拉伸 */
+      /* 讓 z-index 生效並可浮在橫線上方 */
+      position: relative;
+      width: 40px;          /* ✅ 固定寬度 */
+      height: 40px;         /* ✅ 固定高度 */
+      border-radius: 50%;   /* ✅ 變圓形 */
+      background: radial-gradient(circle at 30% 30%, #d9b37c, #8b5e34);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+      cursor: pointer;
+      transition: all 0.25s ease;
+      display: inline-flex;       /* ✅ 讓按鈕內部不被撐開 */
+      align-items: center;
+      justify-content: center;
+      padding: 0 0px 0 0px;
+      margin: 0 10px 0 10px;
+      line-height: 0;
+      /* 確保圓點在橫線之上，但低於 modal */
+      z-index: 7000;
+    }
+
+    /* hover 立體浮起效果 */
+    .timeline-dot:hover {
+      transform: translateY(-3px) scale(1.1);
+      background: radial-gradient(circle at 30% 30%, #e8c58f, #a56f3c);
+      box-shadow: 0 6px 3px rgba(0, 0, 0, 0.35);
+      border-radius: 20px;
+    }
+
+    /* active 狀態 */
+    .timeline-dot.active {
+      transform: scale(1.3);
+      background: radial-gradient(circle at 30% 30%, #ffde9b, #b36b2c);
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+      border-radius: 20px;
+    }
+    /* === 咖啡色橫線 === */
+    .timeline-bottom::before {
+      content: "";
+      position: absolute; /* ✅ 偽元素必須絕對定位 */
+      top: 50%;                      /* ✅ 對齊節點中間 */
+            /* ✅ 線在圓點下方 */
+      left: 0;
+      right: 0;
+      height: 5px;
+      width: var(--line-width, 100%);       /* ✅ 跟內容一樣長 */
+      background: #a6622e;     /* ☕ 咖啡色主題 */
+      border-radius: 20px;
+      opacity: 0.7;
+      /* 把橫線放到較低層，並不攔截圓點互動 */
+      z-index: 0;
+      pointer-events: none;
+      margin: 0 5px 0 5px;
+    }
+      /* === Leaflet marker hover 效果 === */
+    .leaflet-marker-icon {
+      border-radius: 12px; /* ✅ 圓角（可依圖形比例調整） */
+      overflow: hidden;    /* ✅ 防止陰影外溢 */
+      transition: transform 0.25s ease, filter 0.25s ease, box-shadow 0.25s ease;
+      transform-origin: center bottom;
+    }
+
+    .leaflet-marker-icon:hover {
+      transform: scale(1.2); /* 放大一點 */
+      filter: brightness(1.15); /* 提亮 */
+      box-shadow: 0 0 12px rgba(255, 190, 120, 0.8); /* 光暈效果 */
+      z-index: 100 !important; /* 確保浮在最上層 */
+    }
+    #editModal {
+      animation: fadeIn 0.3s ease;
+      /* 確保編輯 modal 永遠在最上層（高於時間軸與節點） */
+      z-index: 200000 !important;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    #editModal textarea {
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    /* === 生命地圖下方的小卡區塊 === */
+    /* === 固定尺寸 + 響應式安全範圍的小卡 === */
+    .photo-card {
+      display: flex;
+      flex-direction: row;       /* ✅ 明確指定橫向排列 */
+      align-items: center;
+      justify-content: flex-start;
+      background: #fff;
+      border-radius: 12px;
+      padding: 10px 12px;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+      gap: 12px;
+      width: 90%;
+      max-width: min(340px, 95vw);  /* ✅ 最大不超過螢幕寬度 */
+      height: clamp(90px, 22vw, 100px);  /* ✅ 根據螢幕自動縮放 */
+      max-height: 100px;            /* ✅ 最大高度限制 */
+      margin: 0 auto;
+      overflow: hidden;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .photo-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+    }
+
+    /* 左側圖片 */
+    .photo-card img {
+      width: clamp(50px, 24vw, 60px);   /* ✅ 在小螢幕下自動縮小 */
+      height: clamp(50px, 24vw, 60px);
+      max-height: 60px;
+      border-radius: 10px;
+      object-fit: contain;          /* ✅ 等比例縮小顯示完整 */
+      object-position: left;
+      flex-shrink: 0;
+      background: #ffff;
+      border: 1px solid #d1d1d1;
+    }
+
+    /* 右側文字區塊 */
+    .photo-card .info {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;   /* ✅ 垂直置中 */
+      text-align: left;          /* ✅ 文字靠左 */
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .photo-card .info .title {
+      font-weight: bold;
+      color: #7a4a22;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      font-size: clamp(13px, 3.5vw, 15px); /* ✅ 響應式字體 */
+    }
+
+    .photo-card .info .date {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 2px;
+    }
+
+    .photo-card .info div:last-child {
+      font-size: 14px;
+      color: #444;
+      line-height: 1.4;
+      max-height: 3.5em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* === 響應式（手機螢幕 < 400px） === */
+    @media (max-width: 400px) {
+      .photo-card {
+        height: 90px;
+        max-width: 300px;
+        gap: 8px;
+        padding: 8px 10px;
+      }
+      .photo-card img {
+        width: 70px;
+        height: 70px;
+      }
+      .photo-card .info .title {
+        font-size: 13px;
+      }
+      .photo-card .info div:last-child {
+        font-size: 12px;
+      }
+    }
+    #photo-card-container {
+      position: relative;
+      margin-top: -50px;   /* ⬆️ 讓小卡往上靠近地圖，依你要的距離可調整 */
+      z-index: 10;       /* ✅ 浮在地圖上層 */
+      pointer-events: auto;
+      transition: margin-top 0.3s ease;
+    }
+
+    /* 小卡本體樣式 */
+    #photo-card-container .card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      box-shadow: 0 2px 10px #ffde9b;
+      padding: 10px;
+      text-align: center;
+      width: 90%;
+      margin: 0 auto;
+      position: relative;
+      z-index: 5001;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    /* hover 效果（微浮起） */
+    #photo-card-container .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 18px #ffde9b;
+    }
+
+
+    /* 小卡上浮顯示 */
+    .card-popup {
+      animation: popup 0.4s ease forwards;
+    }
+
+    @keyframes popup {
+      from { transform: translateY(30px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    /* === 節點發光動畫 === */
+    .timeline-dot.active {
+      transform: scale(1.3);
+      background: radial-gradient(circle at 30% 30%, #ffde9b, #b36b2c);
+      box-shadow: 
+        0 0 3px rgba(255, 200, 100, 0.9);   /* 發亮核心 */
+      border-radius: 100%; /* ✅ 確保仍是圓形 */
+      transition: all 0.25s ease;
+    }
+
+    /* === 刪除提示小視窗 === */
+    #deleteConfirm {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 500;
+    }
+    #deleteConfirm .box {
+      background: #fff;
+      border-radius: 1rem;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+      width: 90%;                 /* ✅ 改為百分比，適配螢幕 */
+      max-width: 320px;           /* ✅ 最大寬度限制，避免太寬 */
+      padding: 16px;
+      text-align: center;
+      animation: fadeIn 0.3s ease;
+      box-sizing: border-box;      /* ✅ 確保 padding 不造成超寬 */
+      word-wrap: break-word;       /* ✅ 長字不撐出螢幕 */
+    }
+
+    /* 🔹 在極小螢幕（例如 iPhone SE）自動縮小字體與間距 */
+    @media (max-width: 400px) {
+      #deleteConfirm .box {
+        padding: 14px;
+        max-width: 90%;
+      }
+      #deleteConfirm .box p {
+        font-size: 14px;
+      }
+      #deleteConfirm button {
+        font-size: 14px;
+        padding: 6px 12px;
+      }
+    }
+
+    #deleteConfirm button {
+      margin: 8px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+    }
+    #deleteConfirm .confirm {
+      background: #e57373;
+      color: #fff;
+    }
+    #deleteConfirm .cancel {
+      background: #ddd;
+      color: #444;
+    }
+
+    .spinner{width:64px;height:64px;border-radius:50%;border:6px solid #e7e1db;border-top-color:#8b5e34;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .is-recording{animation:pulse 1s infinite;border:3px solid #ef4444}
+    @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.7)}70%{box-shadow:0 0 0 10px rgba(239,68,68,0)}}
+    /* hero-text：置中且靠近 header，下方留白與字體微調以匹配 UI 截圖 */
+    #char-empty .hero-text {
+      position: absolute;
+      left: 1rem;
+      right: 1rem;
+      top: 30rem; /* 可再微調：數字越小越靠上 */
+      text-align: center;
+      margin: 0;
+      color: #7a4a22;
+      font-size: 1.15rem;
+      line-height: 1.6;
+      font-weight: 700;
+      padding: 0.4rem 0;
+      pointer-events: none; /* 避免蓋到下方按鈕的點擊 */
+    }
+    @media (max-width: 420px) {
+      #char-empty .hero-text {
+        top: 2.8rem;
+        font-size: 1.05rem;
+      }
+    }
+    /* 莫蘭迪綠色漸層（低飽和、灰化、柔和） */
+    .btn-map-gradient {
+      /* Morandi-inspired muted greens */
+      background:#4A7056;
+      color: #fdfdfd; /* 稍微偏暖的淺色文字，與莫蘭迪色系協調 */
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.75rem;
+      transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+      /* 更柔和的陰影，帶一點灰調 */
+      box-shadow: 0 2px 6px rgba(60, 72, 64, 0.08);
+      border: 1px solid rgba(120,130,118,0.08);
+    }
+    .btn-map-gradient:hover {
+      transform: translateY(-1px);
+      /* hover 輕微加深顏色而不是變亮，符合莫蘭迪沉穩特性 */
+      filter: brightness(0.96);
+      box-shadow: 0 6px 10px rgba(60,72,64,0.10);
+    }
+  </style>
+</head>
+
+<body class="flex items-center justify-center h-screen">
+  <div class="device-frame">
+    <div class="h-app">
+    <!-- Header：全頁共用 -->
+    <header id="main-header" 
+      class="flex items-center justify-between bg-[#4a6fa5] text-white py-3 px-3 
+            absolute top-0 left-0 right-0 shadow-md"
+      style="z-index:8000 !important; border-radius: 0 !important;">
+      <!-- 返回按鈕 -->
+      <button id="backBtn" onclick="handleBack()" class="text-sm opacity-90">← 返回</button>
+
+      <!-- 標題 -->
+  <h1 id="pageTitle" class="text-lg font-semibold text-right px-12 flex-grow text-white select-none">AI角色選擇</h1>
+
+      <!-- 三點選單 (僅聊天畫面顯示) -->
+      <div id="chatMenu" class="relative">
+        <button onclick="toggleDropdown('chat-dropdown')" 
+          class="text-xl opacity-80 hover:bg-[#39587e] rounded-full px-2 mr-8 transition">⋮</button>
+
+        <!-- 下拉選單 -->
+        <div id="chat-dropdown" 
+          class="absolute right-0 mt-3 w-28 bg-white rounded-lg shadow-xl py-1 z-20 hidden">
+          <button onclick="showModal('功能未實作：語言')" 
+            class="flex items-center px-4 py-2 text-sm text-gray-700 w-full text-left hover:bg-gray-100">🌐 語言</button>
+          <button onclick="openShareModal()" 
+            class="flex items-center px-4 py-2 text-sm text-gray-700 w-full text-left hover:bg-gray-100">🔗 分享</button>
+          <button onclick="showModal('功能未實作：設定')" 
+            class="flex items-center px-4 py-2 text-sm text-gray-700 w-full text-left hover:bg-gray-100">⚙️ 設定</button>
+        </div>
+      </div>
+
+      <!-- 關閉按鈕 -->
+      <button class="text-lg opacity-80 ml-2" onclick="handleClose()">✖</button>
+    </header>
+
+  <!-- 全域 toast（顯示在手機框內） -->
+  <div id="toast-container" class="fixed top-4 left-1/2 transform -translate-x-1/2 z-4000 hidden" style="width:88%"></div>
+
+  <!-- 🌟 分享視窗（放在 body 中，確保能被任何頁面呼叫） -->
+  <div id="shareModal" 
+    class="fixed inset-0 bg-black/40 flex items-center justify-center hidden transition" style="z-index:200100;">
+    <div class="bg-white rounded-2xl w-11/12 max-w-sm p-6 shadow-2xl text-center relative mx-4">
+      <h2 class="text-lg font-bold text-gray-800 mb-4">分享這個頁面</h2>
+      
+      <div class="flex flex-col gap-3">
+        <button onclick="shareToFacebook()" 
+          class="flex items-center justify-center gap-2 bg-[#1877F2] text-white font-semibold py-3 px-4 rounded-xl hover:bg-[#145BD1] transition">
+          <img src="https://www.svgrepo.com/show/452196/facebook-1.svg" class="w-5 h-5" alt=""> Facebook
+        </button>
+        <button onclick="shareToLine()" 
+          class="flex items-center justify-center gap-2 bg-[#06C755] text-white font-semibold py-3 px-4 rounded-xl hover:bg-[#05B04D] transition">
+          <img src="https://www.line.me/static/img/icon-line_1.png" class="w-5 h-5" alt=""> LINE
+        </button>
+        <button onclick="copyLink()" 
+          class="flex items-center justify-center gap-2 bg-gray-200 text-gray-800 font-semibold py-3 px-4 rounded-xl hover:bg-gray-300 transition">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 17l4 4 4-4m0-10l-4-4-4 4m4 14V3"/></svg>
+          複製連結
+        </button>
+      </div>
+
+      <!-- 關閉按鈕 -->
+      <button onclick="closeShareModal()" 
+        class="absolute top-2 right-3 text-gray-500 hover:text-gray-800 text-lg font-bold">✕</button>
+    </div>
+  </div>
+
+
+
+    <!-- A. 初始畫面 -->
+    <section id="char-empty" class="screen">
+      <div class="px-4 py-5 text-center flex-1 mt-[56px]"> <!-- 預留 header 高度 -->
+        <p class="text-2xl font-bold text-[#7a4a22] leading-relaxed mt-8">
+          目前無角色<br/>可以利用按鈕生成角色～
+        </p>
+        <div class="mt-8">
+          <textarea id="charPrompt" rows="3"
+            class="w-full rounded-2xl border border-gray-300 bg-gray-100 text-gray-600 text-center p-4"
+            placeholder="錄音文字顯示區｜此區文字可直接修改"></textarea>
+        </div>
+        <div class="mt-8 flex items-center justify-center gap-10">
+          <button id="recordBtn" class="px-8 py-2 rounded-xl bg-[#c08955] text-white shadow">🎤  錄音</button>
+          <button id="charSend0" class="px-8 py-2 rounded-xl bg-[#c08955] text-white shadow">▶  送出</button>
+        </div>
+        <div class="mt-5">
+          <button id="charAuto" class="w-full py-3 rounded-xl bg-[#e7c8a3] text-[#6d492b] font-bold shadow">
+            ✨ 自 動 生 成
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- B. 載入中 -->
+    <section id="char-loading" class="screen hidden">
+      <div class="flex flex-col items-center justify-center flex-1 gap-4 mt-[56px]">
+        <div class="spinner"></div>
+        <div class="text-[#7a4a22] font-semibold text-lg">載入中，AI 正在繪製角色中...</div>
+      </div>
+    </section>
+
+    <!-- C. 九宮格 -->
+    <section id="char-list" class="screen hidden">
+      <div class="p-4 text-center flex-1 overflow-y-auto mt-[56px]">
+        <p class="text-xl font-bold text-[#7a4a22] leading-relaxed mb-3">
+          👋 選擇你的AI夥伴角色～
+        </p>
+        <div id="cardGrid" class="grid grid-cols-3 gap-3"></div>
+        
+        <!-- 自定義角色上傳按鈕 -->
+        <div class="mt-4 pt-4 border-t border-gray-200">
+          <button id="btnUploadCustomChar" 
+            class="w-full py-3 px-6 bg-gradient-to-r from-purple-400 to-pink-400 text-white font-bold rounded-xl shadow-lg hover:from-purple-500 hover:to-pink-500 transition">
+            📷 上傳自定義角色
+          </button>
+          <p class="text-xs text-gray-500 mt-2">從手機相簿選擇圖片作為你的 AI 角色</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- D. 聊天 -->
+    <section id="chat-view" class="screen hidden">
+      <!-- 聊天內容區 -->
+      <div class="flex flex-col items-center gap-4 p-4 overflow-y-auto flex-1 mt-[56px]">
+        <div class="character-container">
+          <img id="chat-avatar" src="https://placehold.co/144x144/f9d853/4a6fa5?text=AI" alt="AI頭像" />
+        </div>
+        <div id="chat-box" class="flex flex-col gap-3 text-center text-gray-800 text-lg font-semibold leading-relaxed p-4">
+          <div class="text-gray-500 text-sm">🎙 點擊下方麥克風開始對話</div>
+        </div>
+      </div>
+
+      <div class="mt-auto border-t border-gray-200 bg-white py-4 flex flex-col items-center">
+        <!-- 輸入欄（靠上） -->
+        <textarea id="chatInput" rows="2"
+          class="w-11/12 rounded-xl border border-gray-300 bg-gray-50 text-gray-700 p-3 text-sm mb-3"
+          placeholder="錄音或輸入想說的話..."></textarea>
+
+        <!-- 麥克風與送出按鈕（置中並排） -->
+        <div class="flex items-center gap-10 justify-center mb-5">
+          <button id="recordBtnChat" class="px-4 py-2 flex items-center justify-center rounded-xl bg-[#d9b37c] text-white shadow">🎤錄音</button>
+          <button id="chatSend" class="px-4 py-2 rounded-xl bg-[#c08955] text-white shadow">▶ 送出</button>
+        </div>
+
+        <!-- 到生命地圖（底部置中） -->
+        <div class="w-full flex items-center justify-center">
+          <button id="toMapBtn" onclick="goToMap()" class="mb-5 px-10 py-2 btn-map-gradient">到生命地圖</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- E. 地圖 -->
+    <section id="map-view" class="screen hidden">
+      <div class="p-2 mt-[56px]">
+        <div id="map"></div>
+        <div class="mt-2 flex gap-2 justify-center">
+          <button class="flex-1 bg-green-200 py-2 rounded opacity-80 hover:opacity-100">◀</button>
+          <button onclick="openAudioManager()" class="flex-1 bg-purple-200 py-2 rounded opacity-80 hover:opacity-100 text-sm">🎵 錄音</button>
+          <button class="flex-1 bg-green-200 py-2 rounded opacity-80 hover:opacity-100">▶</button>
+        </div>
+      </div>
+      <div id="photo-card-container" class="px-3 flex-1 flex items-center justify-center text-gray-600 text-sm">
+        點擊地圖上的生命樹標記，查看回憶照片。
+      </div>
+      <!-- 🌟 頂部時間軸 -->
+      <div id="timeline" class="timeline-bottom"></div>
+
+    </section>
+  <!-- 🌟 小卡編輯畫面 -->
+  <!-- 改成 absolute，讓定位與寬度相對於 .h-app（寬度 360px 的手機框） -->
+  <div id="editModal" class="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 hidden">
+  <div class="bg-white w-[78%] max-w-xs rounded-2xl shadow-2xl p-3 relative flex flex-col box-border">
+        <h2 class="text-lg font-bold text-center text-[#7a4a22] mb-3">✏️ 編輯回憶小卡</h2>
+
+        <textarea id="editTextArea" 
+          class="w-full flex-1 border border-gray-300 rounded-xl p-3 text-gray-800 mb-3 resize-none"
+          rows="8" placeholder="這裡顯示完整錄音文字..."></textarea>
+
+    <!-- 照片預覽與上傳 -->
+    <div class="flex flex-col items-center mb-3">
+      <img id="editPreview" class="rounded-xl max-h-40 object-cover mb-2 hidden"/>
+      <input type="file" id="editUpload" accept="image/*" class="text-sm"/>
+      <div id="editUploadStatus" class="text-sm text-green-600 mt-2 hidden"></div>
+    </div>
+
+    <!-- 按鈕列 -->
+    <div class="flex justify-between mt-3">
+      <button id="btnSaveEdit" class="bg-amber-400 text-[#5b3a17] px-4 py-2 rounded-lg font-bold">💾 儲存</button>
+      <button id="btnCancelEdit" class="bg-red-300 text-white px-4 py-2 rounded-lg">取消</button>
+    </div>
+    </div>
+  </div>
+</div>
+  <!-- 🌟 刪除確認視窗 -->
+  <div id="deleteConfirm">
+    <div class="box">
+      <p class="text-lg font-bold text-[#7a4a22] mb-3">🗑 確定要刪除此回憶嗎？</p>
+      <p class="text-sm text-gray-600 mb-4">刪除後將無法復原。</p>
+      <div>
+        <button class="cancel" onclick="closeDeleteConfirm()">取消</button>
+        <button class="confirm" onclick="confirmDelete()">刪除</button>
+      </div>
+    </div>
+
+      <!-- 🌟 付費示意視窗（聲音生成圖片需付費） -->
+      <div id="payModal" class="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-60 hidden">
+        <div class="bg-white w-[86%] max-w-xs rounded-xl shadow-2xl p-4 relative flex flex-col box-border text-center">
+          <h3 class="text-lg font-bold text-[#7a4a22] mb-2">🔒 需要付費啟用</h3>
+          <p class="text-sm text-gray-600 mb-4">使用「聲音產生圖片」功能需付費解鎖。示意價格：NT$30 / 次。</p>
+          <div id="payPreview" class="text-sm text-gray-800 p-2 mb-4 bg-gray-50 rounded" style="min-height:48px;white-space:pre-wrap;text-align:left;"></div>
+          <div class="flex gap-3 justify-center">
+            <button id="btnConfirmPay" class="px-4 py-2 bg-[#e7c8a3] rounded-xl shadow">付費啟用 (NT$30)</button>
+            <button id="btnCancelPay" class="px-4 py-2 bg-gray-200 rounded-xl shadow">取消</button>
+          </div>
+        </div>
+      </div>
+  </div>
+
+</div>
+ 
+
+<script>    
+// === 多重 API 端點設定 ===
+const API_ENDPOINTS = {
+  // 本地開發 (MSSQL)
+  local: "http://127.0.0.1:8010",
+  
+  // Vercel 部署 (MongoDB)
+  vercel: "https://re-memory-fju-2025.vercel.app",
+  
+  // 當前使用的端點 - 自動偵測最佳端點
+  current: "vercel" // 優先使用雲端版本
+};
+
+const BACKEND_URL = API_ENDPOINTS[API_ENDPOINTS.current];
+const HF_IMAGE_URL = `${BACKEND_URL}/generate-gpt`;    // 🎨 生圖端點
+const HF_PHOTO_URL = `${BACKEND_URL}/api/photo/upload`; // 🖼 照片上傳
+// ===== Hugging Face API 設定 =====
+const HF_ASR_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3";
+const HF_CHAT_URL =  `${BACKEND_URL}/api/chat`;
+
+// === 網路狀態管理 ===
+const NetworkManager = {
+  isOnline: () => navigator.onLine,
+  
+  // 檢測後端連線狀態（支援多個端點）
+  async checkBackendConnection() {
+    if (!this.isOnline()) return false;
+    
+    // 嘗試不同的端點
+    const endpointsToTry = [
+      { name: 'current', url: BACKEND_URL },
+      { name: 'vercel', url: API_ENDPOINTS.vercel },
+      { name: 'local', url: API_ENDPOINTS.local }
+    ];
+    
+    for (const endpoint of endpointsToTry) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
+        const response = await fetch(`${endpoint.url}/api/health`, { 
+          method: 'GET',
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          console.log(`✅ 後端連線成功: ${endpoint.name} (${endpoint.url})`);
+          
+          // 如果不是當前使用的端點，更新配置
+          if (endpoint.url !== BACKEND_URL) {
+            console.log(`🔄 切換到可用端點: ${endpoint.name}`);
+            // 動態更新端點（可選）
+          }
+          
+          return { success: true, endpoint: endpoint.name, url: endpoint.url };
+        }
+      } catch (error) {
+        console.log(`❌ ${endpoint.name} 端點連線失敗:`, error.message);
+        continue;
+      }
+    }
+    
+    console.log('❌ 所有後端端點都無法連線');
+    return { success: false, error: '所有後端服務都無法連線' };
+  },
+  
+  // 網路狀態監聽
+  setupNetworkListeners() {
+    window.addEventListener('online', () => {
+      console.log('🌐 網路連線恢復');
+      showToast('🌐 網路連線恢復，準備同步資料', { type: 'success' });
+      this.syncPendingData();
+    });
+    
+    window.addEventListener('offline', () => {
+      console.log('❌ 網路連線中斷');
+      showToast('❌ 網路中斷，將暫存到本地', { type: 'info' });
+    });
+  },
+  
+  // 同步待處理資料
+  async syncPendingData() {
+    if (!this.isOnline()) return;
+    
+    try {
+      const pendingData = await LocalStorage.getPendingSync();
+      console.log('🔄 發現待同步資料:', pendingData.length, '筆');
+      
+      for (const data of pendingData) {
+        try {
+          await this.syncToBackend(data);
+          await LocalStorage.markAsSynced(data.id);
+          console.log('✅ 成功同步:', data.id);
+        } catch (syncError) {
+          console.error('❌ 同步失敗:', data.id, syncError);
+        }
+      }
+      
+      if (pendingData.length > 0) {
+        showToast(`✅ 成功同步 ${pendingData.length} 筆資料`, { type: 'success' });
+      }
+    } catch (error) {
+      console.error('同步過程出錯:', error);
+    }
+  },
+  
+  // 同步資料到後端
+  async syncToBackend(data) {
+    const response = await fetch(`${BACKEND_URL}/api/memories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+    }
+    
+    return await response.json();
+  }
+};
+
+// === 本地儲存管理 (for APK) ===
+const LocalStorage = {
+  // 檢查是否在 Capacitor 環境中
+  isCapacitor: () => {
+    // 簡化檢測邏輯，直接檢查是否在手機環境
+    return window.Capacitor || 
+           (window.screen.width <= 768 && 'ontouchstart' in window) ||
+           navigator.userAgent.includes('Mobile');
+  },
+  
+  // 儲存回憶記錄
+  async saveMemory(memoryData) {
+    try {
+      console.log('嘗試儲存記憶:', memoryData);
+      console.log('是否為 Capacitor 環境:', this.isCapacitor());
+      
+      if (this.isCapacitor() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) {
+        const { Preferences } = window.Capacitor.Plugins;
+        
+        // 生成唯一 ID
+        const id = Date.now().toString();
+        memoryData.id = id;
+        memoryData.created_at = new Date().toISOString();
+        
+        // 獲取現有回憶列表
+        const { value } = await Preferences.get({ key: 'memories' });
+        const memories = value ? JSON.parse(value) : [];
+        
+        // 添加新回憶
+        memories.push(memoryData);
+        
+        // 儲存回本地
+        await Preferences.set({
+          key: 'memories',
+          value: JSON.stringify(memories)
+        });
+        
+        console.log('成功儲存到 Capacitor Preferences');
+        return { success: true, id };
+      } else {
+        // 回退到 localStorage
+        console.log('使用 localStorage 儲存');
+        const memories = JSON.parse(localStorage.getItem('memories') || '[]');
+        const id = Date.now().toString();
+        memoryData.id = id;
+        memoryData.created_at = new Date().toISOString();
+        memories.push(memoryData);
+        localStorage.setItem('memories', JSON.stringify(memories));
+        console.log('成功儲存到 localStorage');
+        return { success: true, id };
+      }
+    } catch (error) {
+      console.error('儲存回憶失敗:', error);
+      return { success: false, error: error.message };
+    }
+  },
+  
+  // 載入所有回憶記錄
+  async loadMemories() {
+    try {
+      if (this.isCapacitor()) {
+        const { Preferences } = window.Capacitor.Plugins;
+        const { value } = await Preferences.get({ key: 'memories' });
+        return value ? JSON.parse(value) : [];
+      } else {
+        return JSON.parse(localStorage.getItem('memories') || '[]');
+      }
+    } catch (error) {
+      console.error('載入回憶失敗:', error);
+      return [];
+    }
+  },
+  
+  // 儲存照片到本地檔案系統
+  async savePhoto(photoBlob, filename) {
+    try {
+      if (this.isCapacitor()) {
+        const { Filesystem } = window.Capacitor.Plugins;
+        
+        // 將 Blob 轉換為 base64
+        const base64Data = await this.blobToBase64(photoBlob);
+        
+        // 儲存到 APP 內部目錄
+        const savedFile = await Filesystem.writeFile({
+          path: filename,
+          data: base64Data,
+          directory: 'data'
+        });
+        
+        return savedFile.uri;
+      } else {
+        // 桌面版暫時返回 Object URL
+        return URL.createObjectURL(photoBlob);
+      }
+    } catch (error) {
+      console.error('儲存照片失敗:', error);
+      return null;
+    }
+  },
+  
+  // Blob 轉 base64 輔助函數
+  blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  },
+  
+  // 模擬 AI 聊天回應 (離線版)
+  async getOfflineAIReply(text) {
+    // 簡單的回應模式匹配
+    const responses = {
+      greeting: ["你好！很高興和你聊天！", "嗨！今天過得怎麼樣？", "哈囉！有什麼想聊的嗎？"],
+      mood: ["聽起來你的心情不錯呢！", "我能感受到你的情感，想多說一些嗎？", "謝謝你和我分享你的感受！"],
+      memory: ["這是很珍貴的回憶呢！", "聽起來是個很特別的時刻！", "謝謝你分享這個美好的記憶！"],
+      question: ["這是個很有趣的問題！", "讓我想想...", "你覺得呢？我很想聽聽你的想法！"],
+      default: ["我在仔細聽你說話！", "繼續告訴我吧！", "嗯嗯，然後呢？", "我明白你的意思！", "這很有意思！"]
+    };
+    
+    // 簡單的關鍵字匹配
+    const lowerText = text.toLowerCase();
+    
+    let responseType = 'default';
+    if (lowerText.includes('你好') || lowerText.includes('嗨') || lowerText.includes('哈囉')) {
+      responseType = 'greeting';
+    } else if (lowerText.includes('心情') || lowerText.includes('感覺') || lowerText.includes('開心') || lowerText.includes('難過')) {
+      responseType = 'mood';
+    } else if (lowerText.includes('記得') || lowerText.includes('以前') || lowerText.includes('那時')) {
+      responseType = 'memory';
+    } else if (lowerText.includes('？') || lowerText.includes('?') || lowerText.includes('為什麼') || lowerText.includes('怎麼')) {
+      responseType = 'question';
+    }
+    
+    const responseList = responses[responseType];
+    const randomResponse = responseList[Math.floor(Math.random() * responseList.length)];
+    
+    return {
+      response: randomResponse,
+      timestamp: new Date().toISOString()
+    };
+  },
+  
+  // === 同步相關方法 ===
+  
+  // 儲存待同步資料
+  async savePendingSync(data) {
+    try {
+      data.pendingSync = true;
+      data.syncAttempts = 0;
+      
+      if (this.isCapacitor() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) {
+        const { Preferences } = window.Capacitor.Plugins;
+        const { value } = await Preferences.get({ key: 'pendingSync' });
+        const pending = value ? JSON.parse(value) : [];
+        pending.push(data);
+        await Preferences.set({ key: 'pendingSync', value: JSON.stringify(pending) });
+      } else {
+        const pending = JSON.parse(localStorage.getItem('pendingSync') || '[]');
+        pending.push(data);
+        localStorage.setItem('pendingSync', JSON.stringify(pending));
+      }
+      
+      console.log('📤 資料標記為待同步:', data.id);
+    } catch (error) {
+      console.error('儲存待同步資料失敗:', error);
+    }
+  },
+  
+  // 獲取待同步資料
+  async getPendingSync() {
+    try {
+      if (this.isCapacitor() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) {
+        const { Preferences } = window.Capacitor.Plugins;
+        const { value } = await Preferences.get({ key: 'pendingSync' });
+        return value ? JSON.parse(value) : [];
+      } else {
+        return JSON.parse(localStorage.getItem('pendingSync') || '[]');
+      }
+    } catch (error) {
+      console.error('載入待同步資料失敗:', error);
+      return [];
+    }
+  },
+  
+  // 標記資料為已同步
+  async markAsSynced(dataId) {
+    try {
+      const pending = await this.getPendingSync();
+      const filtered = pending.filter(item => item.id !== dataId);
+      
+      if (this.isCapacitor() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) {
+        const { Preferences } = window.Capacitor.Plugins;
+        await Preferences.set({ key: 'pendingSync', value: JSON.stringify(filtered) });
+      } else {
+        localStorage.setItem('pendingSync', JSON.stringify(filtered));
+      }
+      
+      console.log('✅ 資料標記為已同步:', dataId);
+    } catch (error) {
+      console.error('標記同步狀態失敗:', error);
+    }
+  },
+  
+  // 儲存音頻到本地（待上傳）
+  async saveAudioForUpload(audioBlob, metadata) {
+    try {
+      const id = Date.now().toString();
+      const audioData = {
+        id: id,
+        blob: await this.blobToBase64(audioBlob),
+        metadata: metadata,
+        type: 'audio',
+        created_at: new Date().toISOString(),
+        pendingUpload: true
+      };
+      
+      if (this.isCapacitor() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) {
+        const { Preferences } = window.Capacitor.Plugins;
+        const { value } = await Preferences.get({ key: 'pendingAudio' });
+        const pending = value ? JSON.parse(value) : [];
+        pending.push(audioData);
+        await Preferences.set({ key: 'pendingAudio', value: JSON.stringify(pending) });
+      } else {
+        const pending = JSON.parse(localStorage.getItem('pendingAudio') || '[]');
+        pending.push(audioData);
+        localStorage.setItem('pendingAudio', JSON.stringify(pending));
+      }
+      
+      console.log('🎤 音頻已暫存，等待上傳:', id);
+      return { success: true, id: id };
+    } catch (error) {
+      console.error('儲存音頻失敗:', error);
+      return { success: false, error: error.message };
+    }
+  },
+  
+  // 獲取待上傳音頻
+  async getPendingAudio() {
+    try {
+      if (this.isCapacitor() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) {
+        const { Preferences } = window.Capacitor.Plugins;
+        const { value } = await Preferences.get({ key: 'pendingAudio' });
+        return value ? JSON.parse(value) : [];
+      } else {
+        return JSON.parse(localStorage.getItem('pendingAudio') || '[]');
+      }
+    } catch (error) {
+      console.error('載入待上傳音頻失敗:', error);
+      return [];
+    }
+  },
+  
+  // 移除已處理的音頻
+  async removeProcessedAudio(audioId) {
+    try {
+      const pending = await this.getPendingAudio();
+      const filtered = pending.filter(item => item.id !== audioId);
+      
+      if (this.isCapacitor() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences) {
+        const { Preferences } = window.Capacitor.Plugins;
+        await Preferences.set({ key: 'pendingAudio', value: JSON.stringify(filtered) });
+      } else {
+        localStorage.setItem('pendingAudio', JSON.stringify(filtered));
+      }
+      
+      console.log('🗑️ 已處理音頻已移除:', audioId);
+    } catch (error) {
+      console.error('移除音頻失敗:', error);
+    }
+  }
+};
+
+// === IndexedDB 音頻儲存管理 ===
+const AudioDB = {
+  dbName: 'LifeMapAudioDB',
+  version: 1,
+  
+  // 檢查 IndexedDB 支援
+  checkSupport() {
+    const supported = !!window.indexedDB;
+    console.log('🔍 IndexedDB 支援狀態:', supported);
+    console.log('🔍 瀏覽器資訊:', navigator.userAgent);
+    
+    if (!supported) {
+      showToast('❌ 此瀏覽器不支援 IndexedDB', { type: 'error', duration: 5000 });
+      return false;
+    }
+    return true;
+  },
+  
+  // 初始化 IndexedDB
+  async init() {
+    console.log('🎵 嘗試初始化 IndexedDB...');
+    
+    if (!this.checkSupport()) {
+      throw new Error('IndexedDB 不支援');
+    }
+    
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, this.version);
+      
+      request.onerror = (event) => {
+        console.error('❌ IndexedDB 初始化失敗:', event.target.error);
+        showToast('❌ 音頻資料庫初始化失敗', { type: 'error', duration: 5000 });
+        reject(request.error);
+      };
+      
+      request.onsuccess = (event) => {
+        console.log('✅ IndexedDB 連線成功');
+        resolve(request.result);
+      };
+      
+      request.onupgradeneeded = (event) => {
+        console.log('🔄 升級 IndexedDB 結構...');
+        const db = event.target.result;
+        
+        try {
+          // 創建錄音儲存表
+          if (!db.objectStoreNames.contains('recordings')) {
+            const store = db.createObjectStore('recordings', { 
+              keyPath: 'id', 
+              autoIncrement: true 
+            });
+            store.createIndex('timestamp', 'timestamp', { unique: false });
+            store.createIndex('type', 'type', { unique: false });
+            console.log('✅ 錄音資料表已建立');
+          }
+          
+          console.log('✅ IndexedDB 音頻資料庫升級完成');
+          showToast('✅ 音頻資料庫已準備就緒', { type: 'success', duration: 2000 });
+        } catch (upgradeError) {
+          console.error('❌ 資料庫升級失敗:', upgradeError);
+          showToast('❌ 資料庫升級失敗', { type: 'error', duration: 5000 });
+        }
+      };
+    });
+  },
+  
+  // 儲存錄音到 IndexedDB
+  async saveRecording(audioBlob, metadata = {}) {
+    console.log('🎤 開始儲存錄音到 IndexedDB...');
+    console.log('📊 音頻 Blob 資訊:', {
+      size: audioBlob.size,
+      type: audioBlob.type,
+      isBlob: audioBlob instanceof Blob
+    });
+    
+    try {
+      const db = await this.init();
+      console.log('✅ 資料庫連線成功');
+      
+      const transaction = db.transaction(['recordings'], 'readwrite');
+      const store = transaction.objectStore('recordings');
+      
+      const recordingData = {
+        timestamp: Date.now(),
+        date: new Date().toISOString(),
+        audio: audioBlob, // 直接儲存 Blob
+        type: audioBlob.type || 'audio/webm',
+        size: audioBlob.size,
+        duration: metadata.duration || null,
+        transcription: metadata.transcription || null,
+        location: metadata.location || null,
+        latitude: metadata.latitude || null,
+        longitude: metadata.longitude || null,
+        place_name: metadata.place_name || null,
+        memory_id: metadata.memory_id || null,
+        source: metadata.source || 'unknown',
+        synced: false
+      };
+      
+      console.log('📝 準備儲存的資料:', {
+        ...recordingData,
+        audio: `[Blob ${audioBlob.size} bytes]`
+      });
+      
+      const request = store.add(recordingData);
+      
+      return new Promise((resolve, reject) => {
+        request.onsuccess = () => {
+          const recordId = request.result;
+          console.log('✅ 錄音已儲存到 IndexedDB, ID:', recordId);
+          showToast(`✅ 錄音已儲存 (ID: ${recordId})`, { type: 'success', duration: 2000 });
+          
+          // 🗺️ 如果有地理位置，加到地圖上
+          if (metadata.latitude && metadata.longitude) {
+            addAudioMarkerToMap(recordId, metadata.latitude, metadata.longitude, metadata.place_name);
+          }
+          
+          resolve({ success: true, id: recordId, data: recordingData });
+        };
+        
+        request.onerror = (event) => {
+          console.error('❌ IndexedDB 儲存請求失敗:', event.target.error);
+          showToast('❌ 錄音儲存失敗', { type: 'error', duration: 3000 });
+          reject(request.error);
+        };
+      });
+      
+    } catch (error) {
+      console.error('❌ IndexedDB 儲存過程失敗:', error);
+      showToast(`❌ 儲存失敗: ${error.message}`, { type: 'error', duration: 5000 });
+      return { success: false, error: error.message };
+    }
+  },
+  
+  // 載入所有錄音
+  async loadAllRecordings() {
+    try {
+      const db = await this.init();
+      const transaction = db.transaction(['recordings'], 'readonly');
+      const store = transaction.objectStore('recordings');
+      const request = store.getAll();
+      
+      return new Promise((resolve, reject) => {
+        request.onsuccess = () => {
+          console.log('🎵 載入', request.result.length, '個錄音');
+          resolve(request.result);
+        };
+        request.onerror = () => reject(request.error);
+      });
+      
+    } catch (error) {
+      console.error('載入錄音失敗:', error);
+      return [];
+    }
+  },
+  
+  // 播放錄音
+  async playRecording(recordingId) {
+    try {
+      const db = await this.init();
+      const transaction = db.transaction(['recordings'], 'readonly');
+      const store = transaction.objectStore('recordings');
+      const request = store.get(recordingId);
+      
+      return new Promise((resolve, reject) => {
+        request.onsuccess = () => {
+          if (request.result) {
+            const audioBlob = request.result.audio;
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+            
+            audio.onended = () => URL.revokeObjectURL(audioUrl);
+            audio.play().then(() => {
+              console.log('🔊 播放錄音 ID:', recordingId);
+              resolve(audio);
+            }).catch(reject);
+            
+          } else {
+            reject(new Error('錄音不存在'));
+          }
+        };
+        request.onerror = () => reject(request.error);
+      });
+      
+    } catch (error) {
+      console.error('播放錄音失敗:', error);
+      throw error;
+    }
+  },
+  
+  // 刪除錄音
+  async deleteRecording(recordingId) {
+    try {
+      const db = await this.init();
+      const transaction = db.transaction(['recordings'], 'readwrite');
+      const store = transaction.objectStore('recordings');
+      const request = store.delete(recordingId);
+      
+      return new Promise((resolve, reject) => {
+        request.onsuccess = () => {
+          console.log('🗑️ 錄音已刪除 ID:', recordingId);
+          resolve(true);
+        };
+        request.onerror = () => reject(request.error);
+      });
+      
+    } catch (error) {
+      console.error('刪除錄音失敗:', error);
+      return false;
+    }
+  },
+  
+  // 獲取儲存統計
+  async getStorageStats() {
+    try {
+      const recordings = await this.loadAllRecordings();
+      const totalSize = recordings.reduce((sum, r) => sum + (r.size || 0), 0);
+      const totalCount = recordings.length;
+      
+      return {
+        count: totalCount,
+        totalSize: totalSize,
+        totalSizeMB: (totalSize / 1024 / 1024).toFixed(2),
+        unsyncedCount: recordings.filter(r => !r.synced).length
+      };
+      
+    } catch (error) {
+      console.error('獲取統計失敗:', error);
+      return { count: 0, totalSize: 0, totalSizeMB: '0', unsyncedCount: 0 };
+    }
+  }
+};
+
+// === 處理待上傳音頻 ===
+async function processPendingAudio() {
+  try {
+    const pendingAudio = await LocalStorage.getPendingAudio();
+    console.log('🎵 發現待處理音頻:', pendingAudio.length, '個');
+    
+    for (const audioData of pendingAudio) {
+      try {
+        console.log('🎤 處理音頻:', audioData.id);
+        
+        // 將 base64 轉回 Blob
+        const audioBlob = await base64ToBlob(audioData.blob, 'audio/wav');
+        
+        // 上傳到後端處理
+        const formData = new FormData();
+        formData.append("audio", audioBlob, "recording.wav");
+        formData.append("metadata", JSON.stringify(audioData.metadata));
+        
+        const response = await fetch(`${BACKEND_URL}/api/transcribe`, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          console.log('✅ 音頻處理成功:', result);
+          
+          // 如果有轉錄結果，創建記憶
+          if (result.text && result.text.trim()) {
+            const memoryData = {
+              text: result.text.trim(),
+              type: 'audio',
+              created_at: audioData.created_at,
+              source: 'delayed_processing'
+            };
+            
+            await NetworkManager.syncToBackend(memoryData);
+            await LocalStorage.saveMemory(memoryData);
+            
+            showToast(`🎤 音頻已處理：${result.text.substring(0, 20)}...`, { 
+              type: 'success', 
+              duration: 3000 
+            });
+          }
+          
+          // 移除已處理的音頻
+          await LocalStorage.removeProcessedAudio(audioData.id);
+          
+        } else {
+          console.error('音頻處理失敗:', response.status);
+        }
+        
+      } catch (processError) {
+        console.error('處理音頻時出錯:', audioData.id, processError);
+      }
+    }
+    
+  } catch (error) {
+    console.error('處理待上傳音頻時出錯:', error);
+  }
+}
+
+// Base64 轉 Blob 輔助函數
+function base64ToBlob(base64, mimeType) {
+  const byteCharacters = atob(base64);
+  const byteNumbers = new Array(byteCharacters.length);
+  
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  
+  const byteArray = new Uint8Array(byteNumbers);
+  return new Blob([byteArray], { type: mimeType });
+}
+
+// === 地圖 ===
+// 使用保護式初始化，避免在開發或熱重載期間重複建立 Leaflet 地圖
+let map;
+if (window.__lifeMap && window.__lifeMap instanceof L.Map) {
+  console.log('重用已存在的 Leaflet map instance');
+  map = window.__lifeMap;
+} else {
+  map = L.map('map', { attributionControl: false }).setView([23.9739, 120.9820], 8);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  // 暫存於 window 以便未來重用（例如熱重載或腳本被多次執行）
+  window.__lifeMap = map;
+}
+
+// 🌟 自訂 marker 圖示（必須放在最前面！）
+const customIcon = L.icon({
+  iconUrl: "assets/marker.png",
+  iconSize: [30, 30],
+  iconAnchor: [22, 44],
+  popupAnchor: [0, -40]
+});
+
+
+// === 頁面切換 ===
+const views = {
+  empty: document.getElementById('char-empty'),
+  loading: document.getElementById('char-loading'),
+  list: document.getElementById('char-list'),
+  chat: document.getElementById('chat-view'),
+  map: document.getElementById('map-view')
+};
+const pageTitle = document.getElementById('pageTitle');
+const chatMenu = document.getElementById('chatMenu');
+
+let currentView = "empty";
+
+// 切換畫面並更新標題 + 三點選單顯示狀態
+function switchView(name) {
+  currentView = name;
+  for (const key in views) {
+    views[key].classList.add("hidden");
+  }
+  views[name].classList.remove("hidden");
+
+  // 動態更新標題（保留 chatMenu 在所有頁面可見）
+  switch (name) {
+    case "empty":
+    case "loading":
+    case "list":
+      pageTitle.textContent = "AI角色選擇";
+      break;
+    case "chat":
+      pageTitle.textContent = "聊天平台";
+      break;
+    case "map":
+      pageTitle.textContent = "生命地圖";
+      break;
+  }
+
+  // 地圖重繪
+  if (name === "map") {
+    setTimeout(() => map.invalidateSize(), 200);
+    loadMemories();      // ✅ 每次切換地圖時載入回憶
+    renderTimeline();    // ✅ 同步生成底部節點
+  }
+
+  // 確保三點選單（#chatMenu）在所有頁面都可見
+  try { if (chatMenu) chatMenu.classList.remove('hidden'); } catch (e) {}
+}
+
+// 返回邏輯
+function handleBack() {
+  if (currentView === "map") {
+    switchView("chat");
+  } else if (currentView === "chat") {
+    // 回到角色列表頁（而不是 character）
+    switchView("list");
+  } else if (currentView === "list" || currentView === "loading") {
+    switchView("empty");
+  } else {
+    showToast('目前已在最前頁', { duration: 1800 });
+  }
+}
+
+  // === 三點選單顯示 / 隱藏 ===
+function toggleDropdown(id) {
+  const dropdown = document.getElementById(id);
+  // 先關掉其他 dropdown（避免重疊）
+  document.querySelectorAll('.dropdown, [id$="-dropdown"]').forEach(el => {
+    if (el !== dropdown) el.classList.add('hidden');
+  });
+  // 切換當前 dropdown 顯示
+  dropdown.classList.toggle('hidden');
+}
+// 開關分享視窗 - 強硬化版本
+function openShareModal() {
+  try {
+    console.log('openShareModal: attempting to show share modal');
+    const el = document.getElementById("shareModal");
+    if (!el) {
+      console.error('openShareModal: shareModal element not found in DOM');
+      return;
+    }
+
+    // 強制移動到 body 最後（確保不被其他容器限制）
+    if (el.parentElement !== document.body) {
+      document.body.appendChild(el);
+      console.log('openShareModal: moved shareModal to document.body');
+    }
+
+    // 強硬設定所有必要屬性
+    el.classList.remove("hidden");
+    el.style.display = 'flex';
+    el.style.position = 'fixed';
+    el.style.top = '0';
+    el.style.left = '0';
+    el.style.width = '100%';
+    el.style.height = '100%';
+    el.style.zIndex = '2147483647'; // 最高 z-index
+    el.style.pointerEvents = 'auto';
+    el.style.opacity = '1';
+    el.style.visibility = 'visible';
+    el.style.background = 'rgba(0, 0, 0, 0.4)';
+    el.style.alignItems = 'center';
+    el.style.justifyContent = 'center';
+
+    // 確保內部 modal 內容在手機上可見
+    const modalContent = el.querySelector('div');
+    if (modalContent) {
+      modalContent.style.maxWidth = '90vw';
+      modalContent.style.maxHeight = '90vh';
+      modalContent.style.overflow = 'auto';
+      modalContent.style.margin = '0 16px';
+    }
+
+    // 暫時禁用其他高層級元素的互動（防止被遮擋）
+    const highZElements = document.querySelectorAll('[style*="z-index"]');
+    highZElements.forEach(elem => {
+      if (elem !== el && elem.style.zIndex && parseInt(elem.style.zIndex) > 10000) {
+        elem.setAttribute('data-temp-pointer-events', elem.style.pointerEvents || 'auto');
+        elem.style.pointerEvents = 'none';
+      }
+    });
+
+    console.log('openShareModal: modal should now be visible with highest z-index and responsive design');
+  } catch (e) { 
+    console.error('openShareModal failed', e); 
+  }
+}
+
+function closeShareModal() {
+  try {
+    const el = document.getElementById("shareModal");
+    if (!el) return;
+    
+    el.classList.add("hidden");
+    el.style.display = 'none';
+    
+    // 恢復其他元素的 pointer-events
+    const tempElements = document.querySelectorAll('[data-temp-pointer-events]');
+    tempElements.forEach(elem => {
+      elem.style.pointerEvents = elem.getAttribute('data-temp-pointer-events');
+      elem.removeAttribute('data-temp-pointer-events');
+    });
+    
+    console.log('closeShareModal: modal hidden and restored other elements');
+  } catch (e) { 
+    console.error('closeShareModal failed', e); 
+  }
+}
+
+// 分享功能
+function shareToFacebook() {
+  const url = encodeURIComponent(window.location.href);
+  const fbURL = `https://www.facebook.com/sharer/sharer.php?u=${url}`;
+  window.open(fbURL, "_blank", "width=600,height=500");
+}
+
+function shareToLine() {
+  const url = encodeURIComponent(window.location.href);
+  const text = encodeURIComponent("和我一起體驗這個 AI 互動吧！");
+  const lineURL = `https://social-plugins.line.me/lineit/share?url=${url}&text=${text}`;
+  window.open(lineURL, "_blank", "width=600,height=500");
+}
+
+function copyLink() {
+  const url = window.location.href;
+  navigator.clipboard.writeText(url).then(() => {
+    showToast('✔️ 已複製連結到剪貼簿！', { type: 'success' });
+  }).catch(err => {
+    showToast('❌ 複製失敗，請手動複製。', { type: 'error' });
+    console.error(err);
+  });
+}
+
+// 通用的簡單提示 modal（占位）
+function showModal(message) {
+  // 若未定義詳細 modal，使用 alert 作為回退
+  try {
+    // 若未來要做更漂亮的 modal，可在手機框內顯示 toast
+    showToast(message, { duration: 2500 });
+  } catch (e) {
+    console.log('showModal:', message);
+  }
+}
+
+
+// 若點擊外部區域，則自動關閉下拉選單
+window.addEventListener('click', function (e) {
+  const menuBtn = e.target.closest('button[onclick^="toggleDropdown"]');
+  const dropdown = e.target.closest('.dropdown, [id$="-dropdown"]');
+  if (!menuBtn && !dropdown) {
+    document.querySelectorAll('.dropdown, [id$="-dropdown"]').forEach(el => el.classList.add('hidden'));
+  }
+});
+
+// ======= Toast (在手機框內顯示非阻塞提示) =======
+function showToast(message, opts = {}) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const id = `toast-${Date.now()}`;
+  const type = opts.type || 'info';
+  const duration = opts.duration || 3000;
+
+  const el = document.createElement('div');
+  el.id = id;
+  el.className = 'px-4 py-2 rounded-lg text-sm shadow-md mb-2 text-white';
+  el.style.transition = 'opacity 200ms ease, transform 200ms ease';
+  el.style.opacity = '0';
+  el.style.transform = 'translateY(-6px)';
+
+  if (type === 'success') el.style.background = '#16a34a';
+  else if (type === 'error') el.style.background = '#dc2626';
+  else el.style.background = '#374151';
+
+  el.innerText = message;
+  container.appendChild(el);
+  container.classList.remove('hidden');
+
+  // animate in
+  requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; });
+
+  setTimeout(() => {
+    // animate out
+    el.style.opacity = '0'; el.style.transform = 'translateY(-6px)';
+    setTimeout(() => { try { container.removeChild(el); } catch (e) {} }, 250);
+  }, duration);
+}
+
+
+  // 關閉按鈕
+  function handleClose() {
+    if (confirm("確定要關閉嗎？")) window.close();
+  }
+
+    // === 模擬角色生成 ===
+    const charAuto=document.getElementById('charAuto');
+    const cardGrid=document.getElementById('cardGrid');
+    charAuto.onclick=()=>{switchView('loading');setTimeout(()=>{renderCharacterCards();switchView('list');},2000);};
+
+    const demoCharacters=[
+      {name:"阿青",img:"assets/char1.png"},
+      {name:"阿福",img:"assets/char2.png"},
+      {name:"小光",img:"assets/char3.png"},
+      {name:"小綠",img:"assets/char4.png"},
+      {name:"元氣君",img:"assets/char5.png"},
+      {name:"暖暖",img:"assets/char6.png"},
+      {name:"阿哲",img:"assets/char7.png"},
+      {name:"小夏",img:"assets/char8.png"},
+      {name:"阿勇",img:"assets/char9.png"}
+    ];
+
+    function renderCharacterCards(){
+      cardGrid.innerHTML='';
+      demoCharacters.forEach(c=>{
+        const el=document.createElement('div');
+        el.className='card';
+        el.innerHTML=`<img src="${c.img}" alt="${c.name}">
+                      <div class="pt-1 text-center font-bold text-sm">${c.name}</div>`;
+        el.onclick=()=>selectCharacter(c);
+        cardGrid.appendChild(el);
+      });
+    }
+  function selectCharacter(c) {
+    const chatAvatar = document.getElementById("chat-avatar");
+    const chatBox = document.getElementById("chat-box");
+
+    // 更新頭像與對話文字
+    chatAvatar.src = c.img;
+    chatBox.innerHTML = `
+      <div class="text-gray-800 font-semibold text-lg">
+        嗨！我是 ${c.name} ～ 一起聊聊吧！
+      </div>
+    `;
+
+    // 切換到聊天頁
+    switchView("chat");
+  }
+
+  // === 自定義角色上傳功能 ===
+  const btnUploadCustomChar = document.getElementById('btnUploadCustomChar');
+  
+  // 儲存自定義角色到本地
+  async function saveCustomCharacter(imagePath, characterName) {
+    try {
+      if (window.Capacitor && window.Capacitor.Plugins.Preferences) {
+        const { Preferences } = window.Capacitor.Plugins;
+        
+        // 獲取現有自定義角色列表
+        const { value } = await Preferences.get({ key: 'customCharacters' });
+        const customChars = value ? JSON.parse(value) : [];
+        
+        // 添加新角色
+        const newChar = {
+          name: characterName,
+          img: imagePath,
+          isCustom: true
+        };
+        customChars.push(newChar);
+        
+        // 儲存回本地
+        await Preferences.set({
+          key: 'customCharacters',
+          value: JSON.stringify(customChars)
+        });
+        
+        return newChar;
+      }
+    } catch (error) {
+      console.error('儲存自定義角色失敗:', error);
+    }
+    return null;
+  }
+  
+  // 載入自定義角色
+  async function loadCustomCharacters() {
+    try {
+      if (window.Capacitor && window.Capacitor.Plugins.Preferences) {
+        const { Preferences } = window.Capacitor.Plugins;
+        const { value } = await Preferences.get({ key: 'customCharacters' });
+        return value ? JSON.parse(value) : [];
+      }
+    } catch (error) {
+      console.error('載入自定義角色失敗:', error);
+    }
+    return [];
+  }
+  
+  // 上傳自定義角色
+  async function handleCustomCharacterUpload() {
+    try {
+      if (!window.Capacitor || !window.Capacitor.Plugins.Camera) {
+        alert('此功能需要在手機 APP 中使用');
+        return;
+      }
+      
+      const { Camera } = window.Capacitor.Plugins;
+      const { Filesystem } = window.Capacitor.Plugins;
+      
+      // 顯示選擇來源的對話框
+      const source = await new Promise((resolve) => {
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
+        modal.innerHTML = `
+          <div style="background:white;padding:20px;border-radius:10px;text-align:center;max-width:300px;margin:20px;">
+            <h3 style="margin-bottom:20px;color:#333;">選擇圖片來源</h3>
+            <button id="cameraBtn" style="width:100%;padding:12px;margin:5px 0;background:#007AFF;color:white;border:none;border-radius:8px;font-size:16px;">📷 拍照</button>
+            <button id="galleryBtn" style="width:100%;padding:12px;margin:5px 0;background:#34C759;color:white;border:none;border-radius:8px;font-size:16px;">🖼️ 相簿</button>
+            <button id="cancelBtn" style="width:100%;padding:12px;margin:5px 0;background:#FF3B30;color:white;border:none;border-radius:8px;font-size:16px;">❌ 取消</button>
+          </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        modal.querySelector('#cameraBtn').onclick = () => {
+          document.body.removeChild(modal);
+          resolve('camera');
+        };
+        modal.querySelector('#galleryBtn').onclick = () => {
+          document.body.removeChild(modal);
+          resolve('gallery');
+        };
+        modal.querySelector('#cancelBtn').onclick = () => {
+          document.body.removeChild(modal);
+          resolve(null);
+        };
+      });
+      
+      if (!source) return;
+      
+      // 拍照或從相簿選擇
+      const image = await Camera.getPhoto({
+        quality: 80,
+        allowEditing: true,
+        resultType: 'uri',
+        source: source === 'camera' ? 'camera' : 'photos'
+      });
+      
+      // 詢問角色名稱
+      const characterName = prompt('請輸入角色名稱:', '我的角色') || '我的角色';
+      
+      // 儲存圖片到 APP 內部目錄
+      const fileName = `custom_char_${Date.now()}.jpg`;
+      const savedFile = await Filesystem.copy({
+        from: image.webPath,
+        to: fileName,
+        directory: 'data'
+      });
+      
+      // 儲存角色資訊
+      const customChar = await saveCustomCharacter(savedFile.uri, characterName);
+      
+      if (customChar) {
+        // 重新渲染角色卡片（包含自定義角色）
+        await renderAllCharacterCards();
+        alert(`成功添加自定義角色: ${characterName}`);
+      }
+      
+    } catch (error) {
+      console.error('上傳自定義角色失敗:', error);
+      alert('上傳失敗，請重試');
+    }
+  }
+  
+  // 修改角色卡片渲染函數，包含自定義角色
+  async function renderAllCharacterCards() {
+    cardGrid.innerHTML = '';
+    
+    // 渲染預設角色
+    demoCharacters.forEach(c => {
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.innerHTML = `<img src="${c.img}" alt="${c.name}">
+                      <div class="pt-1 text-center font-bold text-sm">${c.name}</div>`;
+      el.onclick = () => selectCharacter(c);
+      cardGrid.appendChild(el);
+    });
+    
+    // 渲染自定義角色
+    const customChars = await loadCustomCharacters();
+    customChars.forEach(c => {
+      const el = document.createElement('div');
+      el.className = 'card relative';
+      el.innerHTML = `<img src="${c.img}" alt="${c.name}">
+                      <div class="pt-1 text-center font-bold text-sm">${c.name}</div>
+                      <div class="absolute top-1 right-1 bg-purple-500 text-white text-xs px-1 rounded">自定義</div>`;
+      el.onclick = () => selectCharacter(c);
+      cardGrid.appendChild(el);
+    });
+  }
+  
+  // 綁定上傳按鈕事件
+  if (btnUploadCustomChar) {
+    btnUploadCustomChar.onclick = handleCustomCharacterUpload;
+  }
+  
+  // 修改原本的 renderCharacterCards 函數
+  function renderCharacterCards() {
+    renderAllCharacterCards();
+  }
+
+
+
+// === 錄音功能：結果填入輸入框 ===
+
+const recordBtn = document.getElementById("recordBtn");
+const charPrompt = document.getElementById("charPrompt");
+
+let mediaRecorder, audioChunks = [], isRecording = false;
+
+// 錄音調試功能
+function logRecordingEnvironment() {
+  console.log('🔍 錄音環境檢測:');
+  console.log('- User Agent:', navigator.userAgent);
+  console.log('- Platform:', navigator.platform);
+  console.log('- MediaDevices 支援:', !!navigator.mediaDevices);
+  console.log('- getUserMedia 支援:', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+  console.log('- MediaRecorder 支援:', typeof MediaRecorder !== 'undefined');
+  console.log('- 是否為 HTTPS:', location.protocol === 'https:');
+  console.log('- 是否為 localhost:', location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+  console.log('- 當前 URL:', location.href);
+  console.log('- 瀏覽器語言:', navigator.language);
+  console.log('- 是否為移動設備:', /Mobi|Android/i.test(navigator.userAgent));
+  
+  // 檢查是否在 Capacitor 環境中
+  console.log('- Capacitor 環境:', typeof window.Capacitor !== 'undefined');
+  if (typeof window.Capacitor !== 'undefined') {
+    console.log('- Capacitor 平台:', window.Capacitor.getPlatform());
+    console.log('- Capacitor 是否為原生:', window.Capacitor.isNativePlatform());
+  }
+  
+  if (typeof MediaRecorder !== 'undefined') {
+    console.log('- 支援的音頻格式:', {
+      webm: MediaRecorder.isTypeSupported('audio/webm'),
+      'webm;codecs=opus': MediaRecorder.isTypeSupported('audio/webm;codecs=opus'),
+      mp4: MediaRecorder.isTypeSupported('audio/mp4'),
+      'mp4;codecs=mp4a.40.2': MediaRecorder.isTypeSupported('audio/mp4;codecs=mp4a.40.2'),
+      ogg: MediaRecorder.isTypeSupported('audio/ogg'),
+      wav: MediaRecorder.isTypeSupported('audio/wav')
+    });
+  }
+  
+  // 檢查媒體設備狀態
+  if (navigator.mediaDevices) {
+    navigator.mediaDevices.enumerateDevices()
+      .then(devices => {
+        const audioInputs = devices.filter(device => device.kind === 'audioinput');
+        console.log('- 可用音頻輸入設備數量:', audioInputs.length);
+        audioInputs.forEach((device, index) => {
+          console.log(`  設備 ${index + 1}:`, {
+            deviceId: device.deviceId,
+            label: device.label || '未知設備',
+            groupId: device.groupId
+          });
+        });
+      })
+      .catch(err => {
+        console.log('- 無法枚舉媒體設備:', err.message);
+      });
+  }
+}
+
+// 錄音診斷功能
+async function runRecordingDiagnostic() {
+  console.log('🏥 開始錄音系統診斷...');
+  
+  const results = {
+    environment: 'unknown',
+    microphone: 'unknown',
+    recorder: 'unknown',
+    database: 'unknown',
+    permissions: 'unknown'
+  };
+  
+  try {
+    // 1. 環境檢測
+    logRecordingEnvironment();
+    results.environment = 'ok';
+    
+    // 2. 麥克風權限檢測
+    console.log('🎤 檢測麥克風權限...');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('✅ 麥克風權限獲得成功');
+      results.microphone = 'ok';
+      results.permissions = 'granted';
+      
+      // 3. MediaRecorder 檢測
+      console.log('🎛️ 檢測 MediaRecorder...');
+      if (typeof MediaRecorder !== 'undefined') {
+        const recorder = new MediaRecorder(stream);
+        console.log('✅ MediaRecorder 建立成功, 狀態:', recorder.state);
+        results.recorder = 'ok';
+        
+        // 測試錄音
+        let testChunks = [];
+        recorder.ondataavailable = e => testChunks.push(e.data);
+        recorder.onstop = () => {
+          const testBlob = new Blob(testChunks, { type: 'audio/webm' });
+          console.log('🧪 測試錄音完成, 大小:', testBlob.size, 'bytes');
+          
+          if (testBlob.size > 0) {
+            console.log('✅ 錄音功能正常');
+          } else {
+            console.log('❌ 錄音沒有數據');
+          }
+        };
+        
+        recorder.start();
+        setTimeout(() => {
+          recorder.stop();
+        }, 1000);
+        
+      } else {
+        console.log('❌ MediaRecorder 不支援');
+        results.recorder = 'not_supported';
+      }
+      
+      // 釋放測試流
+      stream.getTracks().forEach(track => track.stop());
+      
+    } catch (micError) {
+      console.log('❌ 麥克風權限失敗:', micError);
+      results.microphone = 'failed';
+      results.permissions = micError.name || 'denied';
+    }
+    
+    // 4. IndexedDB 檢測
+    console.log('💾 檢測 IndexedDB...');
+    try {
+      await AudioDB.init();
+      console.log('✅ IndexedDB 連線成功');
+      results.database = 'ok';
+    } catch (dbError) {
+      console.log('❌ IndexedDB 連線失敗:', dbError);
+      results.database = 'failed';
+    }
+    
+  } catch (error) {
+    console.error('❌ 診斷過程發生錯誤:', error);
+  }
+  
+  console.log('🏥 診斷結果:', results);
+  
+  // 顯示診斷結果
+  const statusText = `
+    🔍 錄音系統診斷報告:
+    - 環境: ${results.environment}
+    - 麥克風: ${results.microphone}
+    - 錄音器: ${results.recorder}
+    - 資料庫: ${results.database}
+    - 權限: ${results.permissions}
+  `;
+  
+  showToast(statusText, { type: 'info', duration: 8000 });
+  
+  return results;
+}
+
+recordBtn.onclick = async () => {
+  if (!isRecording) {
+    console.log('🎤 開始錄音流程...');
+    logRecordingEnvironment();
+    
+    try {
+      console.log('📱 請求麥克風權限...');
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      
+      console.log('✅ 麥克風權限已獲得, 音軌數量:', stream.getAudioTracks().length);
+      console.log('🎵 音軌資訊:', stream.getAudioTracks().map(track => ({
+        label: track.label,
+        enabled: track.enabled,
+        muted: track.muted,
+        readyState: track.readyState,
+        settings: track.getSettings()
+      })));
+      
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+      console.log('🎤 MediaRecorder 已建立, 狀態:', mediaRecorder.state);
+
+      mediaRecorder.ondataavailable = (e) => {
+        console.log('📊 收到音頻數據:', e.data.size, 'bytes');
+        audioChunks.push(e.data);
+      };
+      
+      mediaRecorder.onstop = async () => {
+        console.log('🛑 錄音停止, 總數據塊:', audioChunks.length);
+        console.log('📊 數據塊大小:', audioChunks.map(chunk => chunk.size));
+        
+        const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+        console.log('🎵 音頻 Blob 已建立:', audioBlob.size, 'bytes');
+        
+        charPrompt.value = "（語音辨識中...）";
+
+        // 📍 嘗試獲取當前位置
+        let locationData = {};
+        try {
+          console.log('📍 嘗試獲取地理位置...');
+          const position = await getCurrentLocation();
+          locationData = {
+            latitude: position.latitude,
+            longitude: position.longitude,
+            accuracy: position.accuracy,
+            place_name: `對話位置 (${position.latitude.toFixed(6)}, ${position.longitude.toFixed(6)})`
+          };
+          console.log('✅ 獲得地理位置:', locationData);
+        } catch (locationError) {
+          console.warn('⚠️ 無法獲取地理位置:', locationError.message);
+          locationData = {
+            latitude: null,
+            longitude: null,
+            place_name: '未知位置'
+          };
+        }
+
+        // 🎤 儲存錄音到 IndexedDB 和雲端
+        try {
+          console.log('💾 開始儲存錄音到 IndexedDB...');
+          const saveResult = await AudioDB.saveRecording(audioBlob, {
+            source: 'character_page',
+            timestamp: Date.now(),
+            duration: audioBlob.size > 0 ? 'recorded' : 'empty',
+            ...locationData
+          });
+          console.log('✅ 錄音已儲存到 IndexedDB:', saveResult);
+          
+          // 🌐 同步到雲端 MongoDB（如果在線）
+          try {
+            if (NetworkManager.isOnline()) {
+              console.log('☁️ 嘗試同步錄音到雲端...');
+              await syncAudioToCloud(audioBlob, {
+                ...locationData,
+                source: 'character_page',
+                transcription: result && result.trim() ? result : null
+              });
+            }
+          } catch (cloudError) {
+            console.warn('⚠️ 雲端同步失敗，錄音已保存在本地:', cloudError.message);
+          }
+          
+        } catch (dbError) {
+          console.error('❌ IndexedDB 儲存失敗:', dbError);
+          showToast(`❌ 錄音儲存失敗: ${dbError.message}`, { type: 'error', duration: 5000 });
+        }
+
+        try {
+          console.log('🔤 開始語音辨識...');
+          const result = await transcribeAudio(audioBlob);
+          console.log('📝 辨識結果:', result);
+          // 顯示辨識結果於輸入框
+          charPrompt.value = result && result.trim() ? result : "請改用文字輸入";
+        } catch (error) {
+          console.error('❌ 語音辨識錯誤:', error);
+          charPrompt.value = "語音辨識失敗，請改用文字輸入";
+          showToast(`❌ 語音辨識失敗: ${error.message}`, { type: 'error', duration: 3000 });
+        }
+        
+        // 釋放媒體流
+        console.log('🔒 釋放媒體流...');
+        const tracks = stream.getTracks();
+        tracks.forEach(track => {
+          console.log('🛑 停止音軌:', track.label);
+          track.stop();
+        });
+      };
+
+      mediaRecorder.onerror = (event) => {
+        console.error('❌ MediaRecorder 錯誤:', event.error);
+        showToast(`❌ 錄音器錯誤: ${event.error}`, { type: 'error', duration: 5000 });
+      };
+
+      mediaRecorder.start();
+      console.log('🟢 開始錄音, MediaRecorder 狀態:', mediaRecorder.state);
+      recordBtn.classList.add("is-recording");
+      recordBtn.textContent = "🟥 停止";
+      isRecording = true;
+      
+      showToast('🎤 開始錄音...', { type: 'info', duration: 1000 });
+      
+    } catch (err) {
+      console.error('❌ 麥克風存取錯誤:', err);
+      
+      let errorMessage = '❌ 無法啟用麥克風';
+      let detailedError = '';
+      
+      console.log('🔍 錯誤詳情:', {
+        name: err.name,
+        message: err.message,
+        stack: err.stack
+      });
+
+      if (err.name === 'NotFoundError') {
+        errorMessage = '❌ 找不到麥克風設備';
+        detailedError = '請確認您的電腦或手機已連接且啟用麥克風。';
+      } else if (err.name === 'NotAllowedError') {
+        errorMessage = '❌ 麥克風權限被拒絕，請在瀏覽器設定中允許';
+        detailedError = '您需要允許網站存取麥克風才能使用錄音功能。';
+      } else if (err.name === 'NotSupportedError') {
+        errorMessage = '❌ 瀏覽器不支援錄音功能';
+        detailedError = '您的瀏覽器版本過舊或不支援此功能。';
+      } else if (err.name === 'NotReadableError') {
+        errorMessage = '❌ 麥克風被其他應用程式佔用';
+        detailedError = '請關閉其他可能正在使用麥克風的應用程式後再試。';
+      } else {
+        detailedError = err.message || '未知錯誤';
+      }
+      
+      // 顯示更詳細的錯誤訊息
+      showToast(`${errorMessage} (${detailedError})`, { type: 'error', duration: 6000 });
+    }
+  } else {
+    mediaRecorder.stop();
+    recordBtn.classList.remove("is-recording");
+    recordBtn.textContent = "🎤  錄音";
+    isRecording = false;
+  }
+};
+// === 共用錄音功能 ===
+function setupRecorder(buttonId, targetTextareaId) {
+  const btn = document.getElementById(buttonId);
+  const target = document.getElementById(targetTextareaId);
+  let mediaRecorder, audioChunks = [], isRecording = false;
+
+  btn.onclick = async () => {
+    if (!isRecording) {
+      console.log('🎤 [共用錄音] 開始錄音流程...', buttonId);
+      logRecordingEnvironment();
+      
+      try {
+        console.log('📱 [共用錄音] 請求麥克風權限...');
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        
+        console.log('✅ [共用錄音] 麥克風權限已獲得, 音軌數量:', stream.getAudioTracks().length);
+        console.log('🎵 [共用錄音] 音軌資訊:', stream.getAudioTracks().map(track => ({
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState,
+          settings: track.getSettings()
+        })));
+        
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        console.log('🎤 [共用錄音] MediaRecorder 已建立, 狀態:', mediaRecorder.state);
+
+        mediaRecorder.ondataavailable = (e) => {
+          console.log('📊 [共用錄音] 收到音頻數據:', e.data.size, 'bytes');
+          audioChunks.push(e.data);
+        };
+        mediaRecorder.onstop = async () => {
+          console.log('🛑 [共用錄音] 錄音停止, 總數據塊:', audioChunks.length);
+          console.log('📊 [共用錄音] 數據塊大小:', audioChunks.map(chunk => chunk.size));
+          
+          target.value = "（語音辨識中...）";
+          const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+          console.log('🎵 [共用錄音] 音頻 Blob 已建立:', audioBlob.size, 'bytes');
+          
+          // 📍 嘗試獲取當前位置
+          let locationData = {};
+          try {
+            console.log('📍 [共用錄音] 嘗試獲取地理位置...');
+            const position = await getCurrentLocation();
+            locationData = {
+              latitude: position.latitude,
+              longitude: position.longitude,
+              accuracy: position.accuracy,
+              place_name: `位置 (${position.latitude.toFixed(6)}, ${position.longitude.toFixed(6)})`
+            };
+            console.log('✅ [共用錄音] 獲得地理位置:', locationData);
+          } catch (locationError) {
+            console.warn('⚠️ [共用錄音] 無法獲取地理位置:', locationError.message);
+            locationData = {
+              latitude: null,
+              longitude: null,
+              place_name: '未知位置'
+            };
+          }
+          
+          // 🎤 儲存錄音到 IndexedDB 和雲端
+          try {
+            console.log('💾 [共用錄音] 開始儲存錄音到 IndexedDB...');
+            const saveResult = await AudioDB.saveRecording(audioBlob, {
+              source: targetTextareaId,
+              timestamp: Date.now(),
+              duration: audioBlob.size > 0 ? 'recorded' : 'empty',
+              ...locationData
+            });
+            console.log('✅ [共用錄音] 錄音已儲存到 IndexedDB:', saveResult);
+            
+            // 🌐 同步到雲端 MongoDB（如果在線）
+            try {
+              if (NetworkManager.isOnline()) {
+                console.log('☁️ [共用錄音] 嘗試同步錄音到雲端...');
+                await syncAudioToCloud(audioBlob, {
+                  ...locationData,
+                  source: targetTextareaId,
+                  transcription: text && text.trim() ? text : null
+                });
+              }
+            } catch (cloudError) {
+              console.warn('⚠️ [共用錄音] 雲端同步失敗，錄音已保存在本地:', cloudError.message);
+            }
+            
+          } catch (dbError) {
+            console.error('❌ [共用錄音] IndexedDB 儲存失敗:', dbError);
+            showToast(`❌ 錄音儲存失敗: ${dbError.message}`, { type: 'error', duration: 5000 });
+          }
+          
+          try {
+            console.log('🔤 [共用錄音] 開始語音辨識...');
+            const text = await transcribeAudio(audioBlob);
+            console.log('📝 [共用錄音] 辨識結果:', text);
+            target.value = text && text.trim() ? text : "請改用文字輸入";
+          } catch (error) {
+            console.error('❌ [共用錄音] 語音辨識錯誤:', error);
+            target.value = "語音辨識失敗，請改用文字輸入";
+            showToast(`❌ 語音辨識失敗: ${error.message}`, { type: 'error', duration: 3000 });
+          }
+          
+          // 釋放媒體流
+          console.log('🔒 [共用錄音] 釋放媒體流...');
+          const tracks = stream.getTracks();
+          tracks.forEach(track => {
+            console.log('🛑 [共用錄音] 停止音軌:', track.label);
+            track.stop();
+          });
+        };
+
+        mediaRecorder.onerror = (event) => {
+          console.error('❌ [共用錄音] MediaRecorder 錯誤:', event.error);
+          showToast(`❌ 錄音器錯誤: ${event.error}`, { type: 'error', duration: 5000 });
+        };
+
+        mediaRecorder.start();
+        console.log('🟢 [共用錄音] 開始錄音, MediaRecorder 狀態:', mediaRecorder.state);
+        btn.classList.add("is-recording");
+        btn.textContent = "🟥 停止";
+        isRecording = true;
+        
+        showToast('🎤 開始錄音...', { type: 'info', duration: 1000 });
+      } catch (err) {
+        console.error('❌ [共用錄音] 麥克風存取錯誤:', err);
+        
+        let errorMessage = '❌ 無法啟用麥克風';
+        
+        if (err.name === 'NotAllowedError') {
+          errorMessage = '❌ 麥克風權限被拒絕，請在瀏覽器設定中允許';
+        } else if (err.name === 'NotFoundError') {
+          errorMessage = '❌ 找不到麥克風設備，請檢查是否已連接。';
+        } else if (err.name === 'NotSupportedError') {
+          errorMessage = '❌ 瀏覽器不支援錄音功能';
+        } else if (err.name === 'NotReadableError') {
+          errorMessage = '❌ 麥克風被其他應用程式佔用';
+        }
+        
+        console.log('🔍 [共用錄音] 錯誤詳情:', {
+          name: err.name,
+          message: err.message,
+          stack: err.stack,
+          buttonId: buttonId,
+          targetId: targetTextareaId
+        });
+        
+        showToast(errorMessage, { type: 'error', duration: 6000 });
+        target.value = "麥克風無法使用，請手動輸入";
+      }
+    } else {
+      mediaRecorder.stop();
+      btn.classList.remove("is-recording");
+      btn.textContent = "🎤  錄音";
+      isRecording = false;
+    }
+  };
+}
+
+
+function appendMessage(sender, text) {
+  const chatBox = document.getElementById("chat-box");
+  const msg = document.createElement("div");
+  msg.className = sender === "user" ? "text-right text-blue-700" : "text-left text-brown-700";
+  msg.textContent = sender === "user" ? `🧑‍💬 ${text}` : `🤖 小光：${text}`;
+  chatBox.appendChild(msg);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// 🎧 語音 → 文字（圖表架構：統一上傳後端處理）
+async function transcribeAudio(audioBlob) {
+  try {
+    console.log("🎙️ 開始語音轉文字，音頻大小:", audioBlob.size, "字節");
+    
+    // 檢查音頻大小
+    if (audioBlob.size < 1000) {
+      console.warn("音頻文件太小，可能錄音失敗");
+      return "錄音時間太短，請重新錄音";
+    }
+
+    // 檢查網路狀態
+    const isOnline = NetworkManager.isOnline();
+    const backendAvailable = isOnline ? await NetworkManager.checkBackendConnection() : false;
+    
+    if (backendAvailable) {
+      // 線上模式：上傳到後端處理 (符合圖表架構)
+      console.log("🌐 線上模式：上傳音頻到後端處理");
+      
+      try {
+        const formData = new FormData();
+        formData.append("audio", audioBlob, "recording.wav");
+        
+        const response = await fetch(`${BACKEND_URL}/api/transcribe`, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+        }
+
+        const result = await response.json();
+        console.log("後端語音轉文字結果：", result);
+        
+        if (result.text && result.text.trim()) {
+          showToast('✅ 語音識別成功', { type: 'success', duration: 2000 });
+          return result.text.trim();
+        } else {
+          throw new Error("後端回傳空白結果");
+        }
+        
+      } catch (backendError) {
+        console.error("後端語音轉文字失敗:", backendError);
+        showToast('⚠️ 後端處理失敗，暫存音頻等待重試', { type: 'warning' });
+        
+        // 儲存音頻供後續重試
+        await LocalStorage.saveAudioForUpload(audioBlob, {
+          timestamp: new Date().toISOString(),
+          purpose: 'transcription'
+        });
+        
+        return "語音已暫存，將在網路恢復時重新處理";
+      }
+      
+    } else {
+      // 離線模式：暫存音頻
+      console.log("📱 離線模式：暫存音頻等待同步");
+      
+      await LocalStorage.saveAudioForUpload(audioBlob, {
+        timestamp: new Date().toISOString(),
+        purpose: 'transcription'
+      });
+      
+      showToast('💾 音頻已暫存，將在連線後處理', { type: 'info', duration: 3000 });
+      
+      // 嘗試使用原生語音識別作為暫時方案（如果可用）
+      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        try {
+          console.log("🔄 嘗試原生語音識別作為暫時方案");
+          const nativeResult = await useNativeSpeechRecognition();
+          console.log("原生語音識別暫時結果:", nativeResult);
+          return nativeResult + " (離線暫存)";
+        } catch (nativeError) {
+          console.warn("原生語音識別也失敗:", nativeError);
+        }
+      }
+      
+      return "音頻已暫存，請手動輸入內容或等待網路恢復";
+    }
+
+  } catch (e) {
+    console.error("語音轉文字錯誤:", e);
+    showToast('💡 語音轉文字失敗，請手動輸入', { type: 'info', duration: 3000 });
+    return "請手動輸入您剛才說的內容";
+  }
+}
+
+// 原生語音識別功能（手機版專用）
+async function useNativeSpeechRecognition() {
+  return new Promise((resolve, reject) => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      reject(new Error("瀏覽器不支援語音識別"));
+      return;
+    }
+    
+    const recognition = new SpeechRecognition();
+    
+    // 設定語音識別參數
+    recognition.lang = 'zh-TW'; // 繁體中文
+    recognition.continuous = false; // 單次識別
+    recognition.interimResults = false; // 不要中間結果
+    recognition.maxAlternatives = 1; // 只要最佳結果
+    
+    let timeout;
+    
+    recognition.onstart = () => {
+      console.log("原生語音識別開始...");
+      showToast('🎤 請開始說話', { type: 'info', duration: 2000 });
+      
+      // 設定超時
+      timeout = setTimeout(() => {
+        recognition.stop();
+        reject(new Error("語音識別超時"));
+      }, 8000); // 8秒超時
+    };
+    
+    recognition.onresult = (event) => {
+      clearTimeout(timeout);
+      const result = event.results[0][0].transcript;
+      console.log("原生語音識別結果:", result);
+      showToast('✅ 識別成功！', { type: 'success', duration: 1000 });
+      resolve(result);
+    };
+    
+    recognition.onerror = (event) => {
+      clearTimeout(timeout);
+      console.error("原生語音識別錯誤:", event.error);
+      
+      let errorMsg = "語音識別失敗";
+      switch(event.error) {
+        case 'no-speech':
+          errorMsg = "沒有檢測到語音，請重新錄音";
+          break;
+        case 'audio-capture':
+          errorMsg = "無法存取麥克風";
+          break;
+        case 'not-allowed':
+          errorMsg = "麥克風權限被拒絕";
+          break;
+        case 'network':
+          errorMsg = "網路連線問題";
+          break;
+      }
+      
+      reject(new Error(errorMsg));
+    };
+    
+    recognition.onend = () => {
+      clearTimeout(timeout);
+      console.log("原生語音識別結束");
+    };
+    
+    // 開始識別
+    try {
+      recognition.start();
+    } catch (startError) {
+      clearTimeout(timeout);
+      reject(new Error("無法啟動語音識別: " + startError.message));
+    }
+  });
+}
+
+// === 地理位置和錄音地圖功能 ===
+
+// 獲取當前地理位置
+async function getCurrentLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('此裝置不支援地理位置'));
+      return;
+    }
+    
+    const options = {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 60000
+    };
+    
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        console.log('📍 獲得地理位置:', position.coords);
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy
+        });
+      },
+      (error) => {
+        console.warn('❌ 地理位置獲取失敗:', error);
+        let errorMsg = '無法獲取位置';
+        switch(error.code) {
+          case error.PERMISSION_DENIED:
+            errorMsg = '位置權限被拒絕';
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMsg = '位置資訊無法使用';
+            break;
+          case error.TIMEOUT:
+            errorMsg = '位置請求超時';
+            break;
+        }
+        reject(new Error(errorMsg));
+      },
+      options
+    );
+  });
+}
+
+// 將錄音標記添加到地圖
+function addAudioMarkerToMap(recordingId, lat, lng, placeName = null) {
+  try {
+    // 創建音頻圖標
+    const audioIcon = L.icon({
+      iconUrl: 'data:image/svg+xml;base64,' + btoa(`
+        <svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="20" cy="20" r="18" fill="#ff6b6b" stroke="#fff" stroke-width="2"/>
+          <path d="M15 12h10v16h-10z" fill="#fff"/>
+          <circle cx="20" cy="30" r="3" fill="#fff"/>
+        </svg>
+      `),
+      iconSize: [40, 40],
+      iconAnchor: [20, 40],
+      popupAnchor: [0, -40]
+    });
+    
+    const marker = L.marker([lat, lng], { icon: audioIcon }).addTo(map);
+    
+    // 創建 popup 內容
+    const popupContent = `
+      <div class="audio-popup" style="min-width: 200px;">
+        <h3 style="margin: 0 0 10px 0; color: #333;">🎤 錄音記憶</h3>
+        ${placeName ? `<p style="margin: 5px 0; color: #666;">📍 ${placeName}</p>` : ''}
+        <div style="margin-top: 10px;">
+          <button onclick="playRecordingFromMap('${recordingId}')" 
+                  style="background: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 5px;">
+            ▶️ 播放
+          </button>
+          <button onclick="deleteRecordingFromMap('${recordingId}', this)" 
+                  style="background: #f44336; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
+            🗑️ 刪除
+          </button>
+        </div>
+        <div style="margin-top: 10px; font-size: 12px; color: #888;">
+          錄音 ID: ${recordingId}
+        </div>
+      </div>
+    `;
+    
+    marker.bindPopup(popupContent);
+    
+    // 儲存標記參考，方便之後管理
+    if (!window.audioMarkers) window.audioMarkers = new Map();
+    window.audioMarkers.set(recordingId, marker);
+    
+    console.log('🗺️ 錄音標記已添加到地圖:', recordingId, lat, lng);
+    
+  } catch (error) {
+    console.error('❌ 添加錄音標記失敗:', error);
+  }
+}
+
+// 從地圖播放錄音
+async function playRecordingFromMap(recordingId) {
+  try {
+    const result = await AudioDB.playRecording(parseInt(recordingId));
+    if (result.success) {
+      showToast('🎵 開始播放錄音', { type: 'success', duration: 2000 });
+    } else {
+      showToast('❌ 播放失敗', { type: 'error', duration: 3000 });
+    }
+  } catch (error) {
+    console.error('播放錄音失敗:', error);
+    showToast('❌ 播放錯誤: ' + error.message, { type: 'error', duration: 3000 });
+  }
+}
+
+// 從地圖刪除錄音
+async function deleteRecordingFromMap(recordingId, buttonElement) {
+  if (confirm('確定要刪除這個錄音嗎？')) {
+    try {
+      const result = await AudioDB.deleteRecording(parseInt(recordingId));
+      if (result.success) {
+        // 移除地圖標記
+        if (window.audioMarkers && window.audioMarkers.has(recordingId)) {
+          const marker = window.audioMarkers.get(recordingId);
+          map.removeLayer(marker);
+          window.audioMarkers.delete(recordingId);
+        }
+        
+        // 關閉 popup
+        map.closePopup();
+        
+        showToast('✅ 錄音已刪除', { type: 'success', duration: 2000 });
+      } else {
+        showToast('❌ 刪除失敗', { type: 'error', duration: 3000 });
+      }
+    } catch (error) {
+      console.error('刪除錄音失敗:', error);
+      showToast('❌ 刪除錯誤: ' + error.message, { type: 'error', duration: 3000 });
+    }
+  }
+}
+
+// 載入所有錄音標記到地圖
+async function loadAudioMarkersToMap() {
+  try {
+    const recordings = await AudioDB.getAllRecordings();
+    recordings.forEach(recording => {
+      if (recording.latitude && recording.longitude) {
+        addAudioMarkerToMap(recording.id, recording.latitude, recording.longitude, recording.place_name);
+      }
+    });
+    console.log('🗺️ 已載入', recordings.filter(r => r.latitude && r.longitude).length, '個錄音標記');
+  } catch (error) {
+    console.error('載入錄音標記失敗:', error);
+  }
+}
+
+// 同步錄音到雲端 MongoDB
+async function syncAudioToCloud(audioBlob, metadata) {
+  try {
+    // 將音頻轉換為 Base64
+    const audioBase64 = await blobToBase64(audioBlob);
+    
+    const payload = {
+      audio_data: audioBase64,
+      transcription: metadata.transcription,
+      location: metadata.location,
+      latitude: metadata.latitude,
+      longitude: metadata.longitude, 
+      place_name: metadata.place_name,
+      memory_id: metadata.memory_id,
+      source: metadata.source || 'mobile_app',
+      duration: metadata.duration,
+      audio_type: audioBlob.type || 'audio/webm'
+    };
+    
+    const response = await fetch(`${BACKEND_URL}/api/audio`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+    
+    if (response.ok) {
+      const result = await response.json();
+      console.log('✅ 錄音已同步到雲端:', result);
+      return result;
+    } else {
+      throw new Error(`雲端同步失敗: ${response.status}`);
+    }
+    
+  } catch (error) {
+    console.error('❌ 雲端同步錯誤:', error);
+    throw error;
+  }
+}
+
+// Blob 轉 Base64 輔助函數
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1]; // 移除 data:audio/webm;base64, 前綴
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// === 聊天送出功能（支援線上和離線模式）===
+document.getElementById("chatSend").onclick = async () => {
+  const inputBox = document.getElementById("chatInput");
+  const text = inputBox.value.trim();
+  
+  // 使用統一的聊天送出函數
+  await performChatSend(text);
+  
+  // 清空輸入框
+  inputBox.value = "";
+};
+
+// === 統一的聊天送出函數 ===
+async function performChatSend(text) {
+  if (!text || !text.trim()) {
+    showToast('請先輸入或錄音內容！', { type: 'error' });
+    return;
+  }
+
+  try {
+    let saveResult;
+    
+    // 獲取當前位置（如果可能的話）
+    let currentPosition = null;
+    try {
+      if (navigator.geolocation) {
+        const position = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            timeout: 5000,
+            enableHighAccuracy: false
+          });
+        });
+        currentPosition = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        };
+        console.log("獲取到位置:", currentPosition);
+      }
+    } catch (geoError) {
+      console.log("無法獲取位置:", geoError);
+    }
+
+    // 圖表架構：手機和桌面都優先嘗試後端，失敗時本地儲存
+    const memoryData = {
+      text: text,
+      type: 'text',
+      lat: currentPosition?.lat || null,
+      lng: currentPosition?.lng || null,
+      place: currentPosition ? "當前位置" : null,
+      created_at: new Date().toISOString()
+    };
+    
+    // 檢查網路和後端連線狀態
+    const isOnline = NetworkManager.isOnline();
+    const backendAvailable = isOnline ? await NetworkManager.checkBackendConnection() : false;
+    
+    if (backendAvailable) {
+      // 線上模式：優先使用後端 (符合圖表架構)
+      try {
+        console.log("🌐 嘗試儲存到後端");
+        const res = await fetch(`${BACKEND_URL}/api/memories`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(memoryData)
+        });
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        }
+
+        saveResult = await res.json();
+        console.log("✅ 後端儲存成功：", saveResult);
+        showToast('☁️ 記憶已同步到雲端', { type: 'success', duration: 2000 });
+        
+      } catch (backendError) {
+        console.warn("後端儲存失敗，改用本地儲存:", backendError);
+        
+        // 儲存到本地並標記待同步
+        saveResult = await LocalStorage.saveMemory(memoryData);
+        await LocalStorage.savePendingSync(memoryData);
+        
+        console.log("📱 本地儲存（待同步）：", saveResult);
+        showToast('💾 暫存本地，稍後同步', { type: 'warning', duration: 2000 });
+      }
+    } else {
+      // 離線模式：本地儲存並標記待同步
+      console.log("📱 離線模式：本地儲存");
+      
+      saveResult = await LocalStorage.saveMemory(memoryData);
+      await LocalStorage.savePendingSync(memoryData);
+      
+      console.log("� 離線儲存（待同步）：", saveResult);
+      showToast('📴 離線模式，資料已暫存', { type: 'info', duration: 2000 });
+    }
+
+    if (saveResult && saveResult.success) {
+      // ✅ 更新對話框
+      appendMessage("user", text);
+      
+      // 獲取 AI 回應
+      const aiReply = await getAIReply(text);
+      appendMessage("ai", aiReply);
+      
+      // 顯示儲存成功訊息
+      showToast('✅ 記憶已儲存到生命地圖！', { type: 'success' });
+
+      // 立即重新載入回憶並更新時間軸，確保新節點立即顯示
+      try {
+        await loadMemories();
+        await renderTimeline();
+      } catch (e) {
+        console.warn('performChatSend: failed to refresh timeline after creating memory', e);
+      }
+    } else {
+      console.error('儲存失敗:', saveResult);
+      showToast('❌ 儲存失敗，請重試', { type: 'error' });
+      throw new Error('儲存記憶失敗');
+    }
+
+  } catch (err) {
+    console.error("儲存失敗：", err);
+    showToast('❌ 無法儲存，請稍後再試', { type: 'error' });
+  }
+}
+
+// 💬 AI 回覆（支援線上和離線模式）
+async function getAIReply(text) {
+  try {
+    // 手機環境優先使用本地儲存，桌面版使用後端
+    const isMobile = window.screen.width <= 768 || 'ontouchstart' in window || /Mobi|Android/i.test(navigator.userAgent);
+    
+    if (isMobile) {
+      // 手機版使用離線 AI 回應
+      const result = await LocalStorage.getOfflineAIReply(text);
+      console.log("🧭 手機版：使用離線 AI 回應");
+      return result.response;
+    } else {
+      // 桌面版嘗試線上模式
+      const response = await fetch(HF_CHAT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      const data = await response.json();
+      console.log("🖥️ 桌面版：使用線上 AI 回應");
+      return data[0]?.generated_text || "我聽不太懂，再說一次嗎？";
+    }
+  } catch (err) {
+    console.error("AI Error:", err);
+    // 線上模式失敗時回退到離線模式
+    try {
+      const result = await LocalStorage.getOfflineAIReply(text);
+      console.log("🔄 回退到離線 AI 回應");
+      return result.response;
+    } catch (offlineErr) {
+      console.error("Offline AI Error:", offlineErr);
+      return "我現在無法回應，請稍後再試！";
+    }
+  }
+}
+
+
+renderCharacterCards();
+switchView('empty');
+
+// === 載入所有回憶（圖表架構：優先後端，回退本地）===
+async function loadMemories() {
+  try {
+    let memories;
+    
+    // 觸發同步檢查（背景執行）
+    if (NetworkManager.isOnline()) {
+      NetworkManager.syncPendingData().catch(e => console.warn('背景同步失敗:', e));
+    }
+    
+    // 檢查網路和後端連線狀態
+    const isOnline = NetworkManager.isOnline();
+    const backendAvailable = isOnline ? await NetworkManager.checkBackendConnection() : false;
+    
+    if (backendAvailable) {
+      // 線上模式：從後端載入 (符合圖表架構)
+      try {
+        console.log("🌐 從後端載入記憶");
+        const res = await fetch(`${BACKEND_URL}/api/memories`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        memories = await res.json();
+        console.log("☁️ 從後端載入", memories.length, "筆記憶");
+        
+        // 同步到本地作為快取
+        for (const memory of memories) {
+          await LocalStorage.saveMemory(memory);
+        }
+        
+      } catch (backendError) {
+        console.warn("後端載入失敗，使用本地快取:", backendError);
+        memories = await LocalStorage.loadMemories();
+        console.log("📱 從本地快取載入", memories.length, "筆記憶");
+      }
+    } else {
+      // 離線模式：從本地載入
+      console.log("📱 離線模式：從本地載入記憶");
+      memories = await LocalStorage.loadMemories();
+      console.log("📴 從本地載入", memories.length, "筆記憶");
+    }
+    
+    // cache for global access (used by delegated handlers)
+    try { window._memories = memories; } catch (e) { window._memories = memories; }
+
+    const container = document.getElementById("photo-card-container");
+    const timeline = document.getElementById("timeline");
+
+    // 無資料處理（僅在後端確實回空陣列時清空時間軸）
+    if (!memories.length) {
+      console.log('後端回傳空回憶陣列，清空時間軸');
+      container.innerHTML = `<div class="text-gray-500 text-center mt-4">
+        目前還沒有任何回憶記錄 🌱
+      </div>`;
+      timeline.innerHTML = "";
+      if (window.memoryMarkers) window.memoryMarkers.forEach(m => map.removeLayer(m));
+      if (window.memoryPolyline) map.removeLayer(window.memoryPolyline);
+      return;
+    }
+
+    // 🔹 清除舊圖層
+    if (window.memoryMarkers) window.memoryMarkers.forEach(m => map.removeLayer(m));
+    if (window.memoryPolyline) map.removeLayer(window.memoryPolyline);
+    window.memoryMarkers = [];
+
+    const validPoints = [];
+
+    // === 1️⃣ 在地圖上畫 Marker ===
+    memories.forEach(m => {
+      if (m.lat !== null && m.lng !== null) {
+        const marker = L.marker([m.lat, m.lng], { icon: customIcon })
+          .addTo(map)
+          .bindPopup(`<b>${m.place || "未知地點"}</b><br>${m.text}`);
+        marker.on("click", () => openMemoryCard({ currentTarget: marker }, m));
+        window.memoryMarkers.push(marker);
+        validPoints.push([m.lat, m.lng]);
+      }
+    });
+
+    // === 2️⃣ 不在地圖上畫折線（僅在底部時間軸顯示） ===
+    // 只使用 markers 的範圍來聚焦地圖，不在地圖上繪製折線
+    if (validPoints.length > 1) {
+      try {
+        const bounds = L.latLngBounds(validPoints);
+        map.fitBounds(bounds);
+      } catch (e) {
+        console.warn('fitBounds 失敗：', e);
+      }
+      // 不在地圖建立 polyline，保留 window.memoryPolyline 為 null
+      window.memoryPolyline = null;
+    } else if (validPoints.length === 1) {
+      map.setView(validPoints[0], 10);
+    }
+
+    // === 3️⃣ 生成時間軸節點 ===
+    timeline.innerHTML = "";
+    timeline.style.display = "flex";
+    // 依 created_at 排序，確保時間軸為時間順序（若沒有 created_at 則保留原順序）
+    try {
+      memories.sort((a,b) => {
+        if (!a.created_at || !b.created_at) return 0;
+        return new Date(a.created_at) - new Date(b.created_at);
+      });
+    } catch (e) { /* non-fatal, keep original order */ }
+
+    memories.forEach((m, idx) => {
+      const dot = document.createElement("button");
+      dot.className = "timeline-dot";
+      dot.title = m.place || "未命名地點";
+      // 如果後端沒有提供 id，使用 fallback id（不另外輸出 debug）
+      dot.dataset.id = (m.id === undefined || m.id === null) ? `missing-${idx}` : m.id;
+      dot.onclick = (e) => openMemoryCard(e, m);
+      timeline.appendChild(dot);
+
+      // 🔸 長按刪除功能（使用共用 helper，支援 touch & mouse & 右鍵）
+      attachLongPress(dot, dot.dataset.id);
+    });
+
+    // 若未產生任何節點，顯示簡短提示
+    if (timeline.children.length === 0) {
+      timeline.innerHTML = `<div class="text-gray-500 text-sm">（尚未有可顯示的時間軸節點）</div>`;
+    }
+
+    // 🔹 更新橫線長度
+    requestAnimationFrame(() => {
+      const dots = timeline.querySelectorAll(".timeline-dot");
+      const gap = 80;
+      const lineLength = (dots.length - 1) * gap + 200;
+      timeline.style.setProperty("--line-width", `${lineLength}px`);
+      // debug: log each dot's computed style
+      dots.forEach((d, i) => {
+        const cs = window.getComputedStyle(d);
+        console.log(`timeline dot[${i}] id=${d.dataset.id} display=${cs.display} opacity=${cs.opacity} z-index=${cs.zIndex}`);
+      });
+    });
+
+  } catch (err) {
+    console.error("載入回憶失敗", err);
+    
+    // 最後的安全網：嘗試從本地載入
+    try {
+      console.log('🔄 嘗試安全回退：從本地載入記憶');
+      const localMemories = await LocalStorage.loadMemories();
+      
+      if (localMemories && localMemories.length > 0) {
+        console.log('✅ 從本地載入到', localMemories.length, '筆記憶');
+        window._memories = localMemories;
+        
+        const container = document.getElementById("photo-card-container");
+        const timeline = document.getElementById("timeline");
+        
+        // 清除舊圖層
+        if (window.memoryMarkers) window.memoryMarkers.forEach(m => map.removeLayer(m));
+        if (window.memoryPolyline) map.removeLayer(window.memoryPolyline);
+        window.memoryMarkers = [];
+        
+        // 簡化顯示本地記憶
+        container.innerHTML = localMemories.map(m => `
+          <div class="bg-white rounded-lg shadow-md p-4 mb-4">
+            <div class="text-gray-600 text-sm mb-2">${m.created_at ? new Date(m.created_at).toLocaleString() : '未知時間'}</div>
+            <div class="text-gray-800">${m.text}</div>
+            ${m.place ? `<div class="text-blue-600 text-sm mt-2">📍 ${m.place}</div>` : ''}
+            <div class="text-orange-500 text-xs mt-2">📱 本地記憶</div>
+          </div>
+        `).join('');
+        
+        timeline.innerHTML = `<div class="text-green-600 text-center p-4">📱 從本地載入 ${localMemories.length} 筆記憶</div>`;
+        
+        showToast('📱 後端無法連線，已載入本地記憶', { type: 'warning', duration: 4000 });
+        return;
+      }
+    } catch (localError) {
+      console.error('本地載入也失敗:', localError);
+    }
+    
+    // 完全失敗時的顯示
+    const container = document.getElementById("photo-card-container");
+    const timeline = document.getElementById("timeline");
+    
+    container.innerHTML = `
+      <div class="text-center mt-8 p-6">
+        <div class="text-red-600 mb-4">❌ 載入記憶失敗</div>
+        <div class="text-gray-600 text-sm mb-4">
+          ${NetworkManager.isOnline() ? '後端服務可能未啟動 (127.0.0.1:8010)' : '目前處於離線狀態'}
+        </div>
+        <div class="text-gray-500 text-xs mb-4">錯誤: ${err.message}</div>
+        <button onclick="loadMemories()" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2">
+          🔄 重新載入
+        </button>
+        <button onclick="switchView('chat')" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
+          ➕ 新增記憶
+        </button>
+      </div>
+    `;
+    
+    timeline.innerHTML = "";
+    if (window.memoryMarkers) window.memoryMarkers.forEach(m => map.removeLayer(m));
+    if (window.memoryPolyline) map.removeLayer(window.memoryPolyline);
+    window.memoryMarkers = [];
+    window.memoryPolyline = null;
+    // 不再使用 mock 測試資料，以免混淆真實資料庫結果
+  }
+}
+
+let deleteTargetId = null; // 🔸 暫存要刪除的 memory id
+
+// === 點擊地圖標記：對應節點發光 ===
+function highlightTimelineDot(memoryId) {
+  const dots = document.querySelectorAll(".timeline-dot");
+  dots.forEach(d => {
+    d.classList.remove("active");
+    if (d.dataset.id == memoryId) d.classList.add("active");
+  });
+}
+// 共用 long-press 與右鍵刪除綁定，支援 mouse 與 touch
+function attachLongPress(el, memoryId, options = {}) {
+  const holdDuration = options.holdDuration || 800;
+  let holdTimer = null;
+
+  const start = (e) => {
+    // 忽略右鍵的 mousedown
+    if (e.type === 'mousedown' && e.button === 2) return;
+    clear();
+    holdTimer = setTimeout(() => {
+      openDeleteConfirm(memoryId);
+      holdTimer = null;
+    }, holdDuration);
+  };
+
+  const clear = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } };
+
+  el.addEventListener('mousedown', start);
+  el.addEventListener('mouseup', clear);
+  el.addEventListener('mouseleave', clear);
+
+  el.addEventListener('touchstart', start, { passive: true });
+  el.addEventListener('touchend', clear);
+  el.addEventListener('touchcancel', clear);
+
+  // 右鍵也觸發刪除（並阻止瀏覽器選單）
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openDeleteConfirm(memoryId);
+  });
+}
+// === 畫出標記並加點擊事件 ===
+function renderMarkers(memories) {
+  map.eachLayer(layer => {
+    if (layer instanceof L.Marker) map.removeLayer(layer);
+  });
+
+  memories.forEach(m => {
+    if (m.lat && m.lng) {
+      const marker = L.marker([m.lat, m.lng], { icon: customIcon }).addTo(map);
+      marker.on("click", () => highlightTimelineDot(m.id));
+    }
+  });
+}
+
+// === 左右鍵控制時間軸 ===
+// 使用安全方式在 DOM 存在時做滾動操作，並安全綁定按鈕事件
+function scrollTimelineLeft() {
+  const tl = document.getElementById("timeline");
+  if (tl) tl.scrollBy({ left: -150, behavior: "smooth" });
+}
+
+function scrollTimelineRight() {
+  const tl = document.getElementById("timeline");
+  if (tl) tl.scrollBy({ left: 150, behavior: "smooth" });
+}
+
+// 安全綁定左右按鈕（map-view 內的兩個綠色按鈕）
+const _navBtns = document.querySelectorAll('.bg-green-200');
+if (_navBtns && _navBtns.length >= 2) {
+  _navBtns[0].onclick = scrollTimelineLeft;
+  _navBtns[1].onclick = scrollTimelineRight;
+}
+
+// === 顯示小卡 ===
+function showMemoryCard(m) {
+  const container = document.getElementById("photo-card-container");
+  // 改為靜態顯示（編輯動作改由集中式的 #editModal 處理，維持一致的視窗大小）
+  container.innerHTML = `
+    <div class="bg-white rounded-xl shadow p-3 w-full text-center">
+      <div class="font-bold text-[#7a4a22] mb-1">${m.place || "未命名地點"}</div>
+      <div class="text-sm text-gray-600 mb-2">${new Date(m.created_at).toLocaleString()}</div>
+
+      <!-- 文字顯示（非內嵌編輯） -->
+      <div id="previewText-${m.id}" class="w-full p-2 mb-2 text-gray-800 text-left" style="white-space:pre-wrap;">${m.text}</div>
+
+      <!-- 照片預覽（若無則提示） -->
+      ${m.photo_url 
+        ? `<img id="previewImg-${m.id}" src="${BACKEND_URL}${m.photo_url}" class="rounded-lg w-full mb-2">`
+        : `<div id="previewImg-${m.id}" class="text-gray-400 mb-2">（尚未上傳照片）</div>`}
+
+      <div class="flex gap-2 justify-center mt-2">
+        <button id="openEditBtn-${m.id}" class="px-4 py-2 bg-[#e7c8a3] rounded shadow">✏️ 編輯</button>
+      </div>
+    </div>
+  `;
+
+  // 綁定編輯按鈕，開啟統一的編輯 modal（#editModal）以維持一致大小與行為
+  const editBtn = document.getElementById(`openEditBtn-${m.id}`);
+  if (editBtn) editBtn.onclick = () => openEditModal(m);
+}
+
+
+async function goToMap() {
+  // ✅ 切換頁面並載入所有回憶
+  switchView("map");
+  await loadMemories();
+  await renderTimeline();
+
+  // 💡【優化】直接使用 loadMemories 載入的快取，避免重複發送網路請求
+  const memories = window._memories || [];
+  if (!memories.length) {
+    document.getElementById("photo-card-container").innerHTML =
+      `<div class="text-gray-500 text-center mt-4">
+         目前還沒有任何回憶記錄，快來新增一筆吧 🌱
+       </div>`;
+  } else {
+    // 如果有回憶，loadMemories 內部會自動聚焦地圖，這裡可以選擇性地設定一個預設視圖
+    // map.setView([23.9739, 120.9820], 8); // 聚焦台灣
+  }
+
+  setTimeout(() => map.invalidateSize(), 200); // ✅ 只需這行確保 Leaflet 重繪
+}
+let currentOpenId = null; // ✅ 用來記錄目前開啟的小卡 ID
+
+// === 生成時間軸節點（安全 wrapper） ===
+async function renderTimeline() {
+  try {
+    // 使用 loadMemories 作為單一來源（loadMemories 含錯誤 fallback 與 mock）
+    await loadMemories();
+  } catch (err) {
+    console.error('renderTimeline 捕獲錯誤：', err);
+    // loadMemories 已處理 mock fallback，這裡不再清空 timeline
+  }
+}
+// 初次呼叫，讓頁面嘗試載入（若後端失敗，會使用 mock）
+renderTimeline();
+// === 開啟刪除確認視窗 ===
+function openDeleteConfirm(memoryId) {
+  deleteTargetId = memoryId;
+  document.getElementById("deleteConfirm").style.display = "flex";
+}
+
+// === 關閉刪除確認視窗 ===
+function closeDeleteConfirm() {
+  deleteTargetId = null;
+  document.getElementById("deleteConfirm").style.display = "none";
+}
+
+// === 確認刪除 ===
+async function confirmDelete() {
+  if (!deleteTargetId) return;
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/memories/${deleteTargetId}`, { method: "DELETE" });
+    if (res.ok) {
+      showToast('🗑 已刪除回憶', { type: 'success' });
+      await loadMemories();
+      await renderTimeline();
+    } else {
+      showToast('❌ 刪除失敗', { type: 'error' });
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('⚠️ 發生錯誤，請稍後再試', { type: 'error' });
+  } finally {
+    closeDeleteConfirm();
+  }
+}
+
+// === 點擊節點開小卡 ===
+function openMemoryCard(e, memory) {
+  const container = document.getElementById("photo-card-container");
+
+  // ✅ 如果再次點同一個節點 → 關閉小卡
+  if (currentOpenId === memory.id) {
+    container.innerHTML = ""; // 清空小卡
+    currentOpenId = null;
+    document.querySelectorAll(".timeline-dot").forEach(d => d.classList.remove("active"));
+    return;
+  }
+
+  // ✅ 更新目前開啟的 ID
+  currentOpenId = memory.id;
+
+  // === 顯示小卡內容 ===
+  container.innerHTML = `
+    <div class="photo-card card-popup">
+      ${
+        memory.photo_url
+          ? `<img src="${BACKEND_URL}${memory.photo_url}" alt="照片" />`
+          : `<div class="text-gray-400 italic flex items-center justify-center w-[90px] h-[90px] bg-gray-100 rounded-lg">
+               (無照片)
+             </div>`
+      }
+      <!-- 右側文字 -->
+      <div class="info">
+        <div class="title">${memory.place || "未命名地點"}</div>
+        <div class="date">${new Date(memory.created_at).toLocaleString()}</div>
+        <div>${memory.text}</div>
+        <div class="text-amber-600 text-xs mt-1">
+          <button id="openEditBtn-card-${memory.id}" class="text-amber-600 text-xs">✏️ 編輯</button>
+        </div>
+      </div>
+
+    </div>
+`;
+
+  //節點高亮
+  document.querySelectorAll(".timeline-dot").forEach(d => d.classList.remove("active"));
+  // 支援兩種情況：
+  // 1) 點擊時間軸上的 DOM button（e.currentTarget 為該 element）
+  // 2) 從 Leaflet marker 觸發（傳入的 e.currentTarget 不是 DOM element），用 memory.id 找對應的 .timeline-dot
+  let targetEl = null;
+  try {
+    if (e && e.currentTarget && e.currentTarget.classList) {
+      targetEl = e.currentTarget;
+    }
+  } catch (err) {
+    // ignore
+  }
+  if (!targetEl) {
+    targetEl = document.querySelector(`.timeline-dot[data-id="${memory.id}"]`);
+  }
+  if (targetEl && targetEl.classList) {
+    targetEl.classList.add("active");
+    // 若節點位於不可見區，平滑滾動到可視範圍
+    try { targetEl.scrollIntoView({ behavior: 'smooth', inline: 'center' }); } catch (e) {}
+  }
+  // 綁定卡片內的編輯按鈕
+  const cardEditBtn = document.getElementById(`openEditBtn-card-${memory.id}`);
+  if (cardEditBtn) cardEditBtn.onclick = () => openEditModal(memory);
+}
+
+// 🌟 開啟編輯畫面
+function openEditModal(memory) {
+  const modal = document.getElementById("editModal");
+  const textArea = document.getElementById("editTextArea");
+  const preview = document.getElementById("editPreview");
+
+  modal.classList.remove("hidden");
+  try { modal.style.display = 'flex'; modal.style.position = 'fixed'; modal.style.zIndex = '10050'; } catch (e) {}
+  textArea.value = memory.text || "";
+  
+  if (memory.photo_url) {
+    preview.src = `${BACKEND_URL}${memory.photo_url}`;
+    preview.classList.remove("hidden");
+  } else {
+    preview.classList.add("hidden");
+  }
+
+  // 綁定上傳事件（guard 實體存在）
+  const upload = document.getElementById("editUpload");
+  if (upload) {
+    upload.onchange = async (e) => {
+    try { if (e && e.preventDefault) e.preventDefault(); } catch(e) {}
+    try { if (e && e.stopPropagation) e.stopPropagation(); } catch(e) {}
+    const statusEl = document.getElementById('editUploadStatus');
+    try {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      // 顯示上傳中
+      statusEl.classList.remove('hidden');
+      statusEl.classList.remove('text-red-600');
+      statusEl.classList.add('text-gray-600');
+      statusEl.textContent = '上傳中...';
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`${BACKEND_URL}/api/memories/photo/${memory.id}`, {
+        method: "POST",
+        body: formData
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || '上傳失敗');
+      }
+
+      const data = await res.json();
+      if (data.photo_url) {
+        preview.src = `${BACKEND_URL}${data.photo_url}`;
+        preview.classList.remove("hidden");
+        statusEl.classList.remove('text-gray-600');
+        statusEl.classList.add('text-green-600');
+        statusEl.textContent = '✅ 照片已上傳';
+      } else {
+        throw new Error('伺服器未回傳 photo_url');
+      }
+    } catch (err) {
+      console.error('upload error', err);
+      statusEl.classList.remove('text-gray-600','text-green-600');
+      statusEl.classList.add('text-red-600');
+      statusEl.textContent = '❌ 上傳失敗';
+    } finally {
+      // 確保 modal 不會在上傳後意外關閉或導致視圖回到首頁
+      try { document.getElementById('editModal').classList.remove('hidden'); } catch (e) {}
+    }
+    };
+  } else {
+    console.warn('openEditModal: editUpload element not found');
+  }
+
+  // 儲存修改
+  const btnSaveEl = document.getElementById("btnSaveEdit");
+  if (btnSaveEl) {
+    btnSaveEl.onclick = async () => {
+    const newText = textArea.value.trim();
+    const res = await fetch(`${BACKEND_URL}/api/memories/${memory.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: newText })
+    });
+
+    if (res.ok) {
+        showToast('✅ 已儲存修改！', { type: 'success' });
+      closeEditModal();
+      await loadMemories();
+    } else {
+        showToast('❌ 儲存失敗', { type: 'error' });
+    }
+    };
+  } else {
+    console.warn('openEditModal: btnSaveEdit element not found');
+  }
+
+  // 返回／取消
+  const btnBackEl = document.getElementById("btnBackEdit");
+  if (btnBackEl) btnBackEl.onclick = closeEditModal;
+  const btnCancelEl = document.getElementById("btnCancelEdit");
+  if (btnCancelEl) btnCancelEl.onclick = closeEditModal;
+}
+
+// 🌟 關閉編輯畫面
+function closeEditModal() {
+  const em = document.getElementById("editModal");
+  if (em) {
+    em.classList.add("hidden");
+    try { em.style.display = 'none'; } catch (e) {}
+  }
+}
+
+
+
+renderCharacterCards();
+switchView('empty');
+// 初始化兩個錄音按鈕
+setupRecorder("recordBtn", "charPrompt");   // 角色頁錄音
+setupRecorder("recordBtnChat", "chatInput"); // 聊天頁錄音 ✅
+
+// === 安全觸發：確保地圖與節點載入 ===
+document.addEventListener("DOMContentLoaded", () => {
+  console.log("🌍 DOM Loaded，初始化應用程式");
+  
+  // 初始化網路管理器
+  NetworkManager.setupNetworkListeners();
+  console.log("🌐 網路監聽器已啟動");
+  
+  // 初始化地圖
+  if (map) {
+    setTimeout(() => {
+      map.invalidateSize();
+      loadMemories();
+    }, 500);
+  } else {
+    console.error("❌ map 未初始化");
+  }
+  
+  // 檢查並處理待上傳音頻
+  setTimeout(async () => {
+    if (NetworkManager.isOnline()) {
+      await processPendingAudio();
+    }
+  }, 2000);
+});
+
+
+// === 綁定第一頁送出按鈕 (#charSend0) 到付費 modal（聲音→圖需付費） ===
+try {
+  const charSendBtn = document.getElementById('charSend0');
+  const payModal = document.getElementById('payModal');
+  const payPreview = document.getElementById('payPreview');
+  const btnConfirmPay = document.getElementById('btnConfirmPay');
+  const btnCancelPay = document.getElementById('btnCancelPay');
+  const charPromptEl = document.getElementById('charPrompt');
+
+  if (charSendBtn) {
+    charSendBtn.addEventListener('click', (e) => {
+      console.log('charSend0 clicked');
+      // 把當前的輸入或錄音文字放到付費預覽區
+      try { payPreview.textContent = (charPromptEl && charPromptEl.value) ? charPromptEl.value : ''; } catch (err) { console.warn('payPreview set failed', err); }
+      if (payModal) {
+        // 強制成固定定位並提高層級，避免被其他元素覆蓋
+        payModal.style.display = 'flex';
+        payModal.style.position = 'fixed';
+        payModal.style.zIndex = '9999';
+        console.log('Opening payModal');
+      } else {
+        console.warn('payModal element not found');
+      }
+    });
+  } else {
+    console.warn('#charSend0 not found when binding pay modal');
+  }
+
+  if (btnCancelPay) {
+    btnCancelPay.addEventListener('click', () => {
+      if (payModal) payModal.style.display = 'none';
+    });
+  }
+
+  if (btnConfirmPay) {
+    btnConfirmPay.addEventListener('click', async () => {
+      // 付費成功的示意處理：關閉 modal 並觸發實際送出流程
+      showToast('🔓 已完成付費，正在啟用功能...', { type: 'success' });
+      if (payModal) payModal.style.display = 'none';
+
+      // 嘗試從角色頁的輸入欄取文字並送出（若有 performChatSend 函式則呼叫）
+      try {
+        const txt = (charPromptEl && charPromptEl.value) ? charPromptEl.value : '';
+        if (typeof performChatSend === 'function') {
+          await performChatSend(txt);
+        } else {
+          // fallback: 建立記憶（使用本地儲存）
+          if (txt && txt.trim()) {
+            // 嘗試獲取位置
+            let currentPosition = null;
+            try {
+              if (navigator.geolocation) {
+                const position = await new Promise((resolve, reject) => {
+                  navigator.geolocation.getCurrentPosition(resolve, reject, {
+                    timeout: 3000,
+                    enableHighAccuracy: false
+                  });
+                });
+                currentPosition = {
+                  lat: position.coords.latitude,
+                  lng: position.coords.longitude
+                };
+              }
+            } catch (geoError) {
+              console.log("無法獲取位置:", geoError);
+            }
+            
+            const memoryData = {
+              text: txt,
+              type: 'text',
+              lat: currentPosition?.lat || null,
+              lng: currentPosition?.lng || null,
+              place: currentPosition ? "當前位置" : null
+            };
+            
+            const saveResult = await LocalStorage.saveMemory(memoryData);
+            if (saveResult && saveResult.success) {
+              appendMessage('user', txt);
+              const aiReply = await getAIReply(txt);
+              appendMessage('ai', aiReply);
+              
+              showToast('✅ 已將這段文字儲存到生命地圖！', { type: 'success' });
+              await loadMemories();
+              await renderTimeline();
+            } else {
+              showToast('❌ 儲存失敗，請重試', { type: 'error' });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Confirm pay action failed', err);
+        showToast('❌ 付費處理失敗，請稍後再試', { type: 'error' });
+      }
+    });
+  }
+} catch (err) {
+  console.error('bind charSend0 -> payModal failed', err);
+}
+
+
+// Debug helper: 檢查 #charSend0 是否被遮蓋，並嘗試將它帶到最上層以恢復可點擊性
+setTimeout(() => {
+  try {
+    const btn = document.getElementById('charSend0');
+    if (!btn) return console.warn('#charSend0 not found in DOM during clickable-check');
+    const rect = btn.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const topEl = document.elementFromPoint(cx, cy);
+    console.log('clickable-check: element at charSend0 center ->', topEl, topEl && topEl.id, topEl && topEl.className);
+
+    // 若按鈕上方的元素不是按鈕本身或其子孫，視為被遮蓋
+    if (topEl && topEl !== btn && !btn.contains(topEl)) {
+      console.warn('charSend0 appears to be covered by:', topEl);
+      // 強制提升按鈕層級與啟用 pointer events
+      try { btn.style.position = 'relative'; } catch (e) {}
+      try { btn.style.zIndex = '10001'; } catch (e) {}
+      try { btn.style.pointerEvents = 'auto'; } catch (e) {}
+      // 也提升父容器層級
+      try { if (btn.parentElement) btn.parentElement.style.zIndex = '10001'; } catch (e) {}
+      console.log('charSend0 z-index/pointer-events adjusted to attempt to restore clickability');
+    }
+  } catch (err) {
+    console.error('clickable-check failed', err);
+  }
+}, 300);
+
+// 把關鍵 modal 移到 body 末端，避免被父容器的 stacking context 或 overflow 擋住
+try {
+  ['payModal','editModal','deleteConfirm','shareModal'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.parentElement && el.parentElement !== document.body) {
+      try {
+        document.body.appendChild(el);
+        console.log(`moved ${id} to document.body`);
+        // ensure hidden modals use display:none when hidden
+        if (el.classList.contains('hidden')) el.style.display = 'none';
+      } catch (e) {
+        console.warn('failed to move', id, e);
+      }
+    }
+  });
+} catch (err) {
+  console.warn('move modals to body failed', err);
+}
+
+// Document-level click forwarder: 若點擊被覆蓋但落在 charSend0 的範圍內，替按鈕觸發 click
+try {
+  const tryForwardClick = (e) => {
+    const btn = document.getElementById('charSend0');
+    if (!btn) return;
+    // 如果點擊目標就是按鈕（或按鈕內），不處理
+    if (e.target && (e.target === btn || btn.contains(e.target))) return;
+    const rect = btn.getBoundingClientRect();
+    const x = e.clientX, y = e.clientY;
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      console.log('document click forwarder: forwarding click to #charSend0');
+      try {
+        // dispatch a synthetic click on the button
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      } catch (err) {
+        console.error('forward click failed', err);
+      }
+    }
+  };
+  // use capture to run early
+  document.addEventListener('click', tryForwardClick, true);
+} catch (err) {
+  console.error('add document click forwarder failed', err);
+}
+
+// Delegated handler for dynamically generated edit buttons (openEditBtn-<id>)
+document.addEventListener('click', function (e) {
+  try {
+    const btn = e.target.closest && e.target.closest('[id^="openEditBtn-"]');
+    if (!btn) return;
+    const idMatch = btn.id.match(/^openEditBtn-(.+)$/);
+    if (!idMatch) return;
+    const midRaw = idMatch[1];
+    // find memory from cache
+    const mems = window._memories || [];
+    let m = null;
+    // support fallback ids like 'missing-<index>' produced elsewhere
+    const missingMatch = String(midRaw).match(/^missing-(\d+)$/);
+    if (missingMatch) {
+      const idx = parseInt(missingMatch[1]);
+      if (!isNaN(idx) && idx >= 0 && idx < mems.length) m = mems[idx];
+    }
+    if (!m) {
+      m = mems.find(x => String(x.id) === String(midRaw));
+    }
+    if (!m) {
+      // as a last resort, try numeric conversion
+      const maybeNum = Number(midRaw);
+      if (!isNaN(maybeNum)) m = mems.find(x => Number(x.id) === maybeNum);
+    }
+    if (m) {
+      openEditModal(m);
+    } else {
+      console.warn('edit button clicked but memory not found for id', midRaw, 'memories_count=', mems.length);
+    }
+  } catch (err) {
+    console.error('delegated edit button handler error', err);
+  }
+});
+document.addEventListener("DOMContentLoaded", () => {
+  // 初始化網路監聽器
+  console.log('🌐 初始化網路狀態監聽器');
+  NetworkManager.setupNetworkListeners();
+  
+  // 檢查初始網路狀態
+  if (NetworkManager.isOnline()) {
+    console.log('🌐 目前網路狀態：線上');
+    // 背景檢查後端連線
+    NetworkManager.checkBackendConnection().then(available => {
+      console.log('🔗 後端連線狀態:', available ? '✅ 可用' : '❌ 不可用');
+    });
+  } else {
+    console.log('📱 目前網路狀態：離線');
+  }
+  
+  const share = document.getElementById('shareModal');
+  if (share && share.parentElement !== document.body) {
+    document.body.appendChild(share);
+    console.log("✅ shareModal 已移出手機框架");
+  }
+  const style = document.createElement("style");
+  style.textContent = `
+    #shareModal { position: fixed !important; z-index: 99999 !important; }
+    #shareModal > div { z-index: 100000 !important; }
+  `;
+  document.head.appendChild(style);
+  
+  // 強化分享按鈕綁定（多重保險）
+  const shareButtons = document.querySelectorAll('button[onclick*="openShareModal"], button:contains("分享")');
+  shareButtons.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      console.log('Share button clicked via delegated listener');
+      e.preventDefault();
+      e.stopPropagation();
+      openShareModal();
+    });
+  });
+  
+  // 也可以通過文字內容找分享按鈕
+  document.querySelectorAll('button').forEach(btn => {
+    if (btn.textContent && btn.textContent.includes('分享')) {
+      btn.addEventListener('click', (e) => {
+        console.log('Share button found by text content, opening modal');
+        e.preventDefault();
+        e.stopPropagation();
+        openShareModal();
+      });
+    }
+  });
+});
+
+// === 錄音管理功能 ===
+async function openAudioManager() {
+  const modal = document.getElementById('audioManagerModal');
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+  
+  // 載入統計資訊
+  const stats = await AudioDB.getStorageStats();
+  document.getElementById('audioStats').innerHTML = `
+    📊 共 ${stats.count} 個錄音 | 📦 ${stats.totalSizeMB} MB | 🔄 ${stats.unsyncedCount} 個待同步
+  `;
+  
+  // 載入錄音列表
+  const recordings = await AudioDB.loadAllRecordings();
+  const audioList = document.getElementById('audioList');
+  
+  if (recordings.length === 0) {
+    audioList.innerHTML = `
+      <div class="text-center text-gray-500 py-8">
+        🎤 還沒有任何錄音記錄
+      </div>
+    `;
+    return;
+  }
+  
+  audioList.innerHTML = recordings.map(recording => `
+    <div class="bg-gray-50 rounded-lg p-4 mb-3 border">
+      <div class="flex justify-between items-start mb-2">
+        <div class="flex-1">
+          <div class="text-sm font-medium text-gray-800">
+            錄音 #${recording.id}
+          </div>
+          <div class="text-xs text-gray-500">
+            📅 ${new Date(recording.date).toLocaleString()}
+          </div>
+          <div class="text-xs text-gray-500">
+            📊 ${(recording.size / 1024).toFixed(1)} KB | ${recording.type}
+          </div>
+          ${recording.transcription ? `<div class="text-sm text-blue-600 mt-1">💬 ${recording.transcription}</div>` : ''}
+        </div>
+        <div class="flex gap-2">
+          <button onclick="playAudioRecord(${recording.id})" 
+                  class="bg-green-500 text-white px-3 py-1 rounded text-xs hover:bg-green-600">
+            ▶️ 播放
+          </button>
+          <button onclick="deleteAudioRecord(${recording.id})" 
+                  class="bg-red-500 text-white px-3 py-1 rounded text-xs hover:bg-red-600">
+            🗑️
+          </button>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs px-2 py-1 rounded ${recording.synced ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-600'}">
+          ${recording.synced ? '✅ 已同步' : '⏳ 待同步'}
+        </span>
+        ${recording.source ? `<span class="text-xs px-2 py-1 bg-blue-100 text-blue-600 rounded">📍 ${recording.source}</span>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function closeAudioManager() {
+  const modal = document.getElementById('audioManagerModal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+async function playAudioRecord(recordingId) {
+  try {
+    showToast('🔊 播放錄音...', { type: 'info', duration: 1000 });
+    await AudioDB.playRecording(recordingId);
+  } catch (error) {
+    console.error('播放失敗:', error);
+    showToast('❌ 播放失敗', { type: 'error' });
+  }
+}
+
+async function deleteAudioRecord(recordingId) {
+  if (confirm('確定要刪除這個錄音嗎？')) {
+    try {
+      await AudioDB.deleteRecording(recordingId);
+      showToast('🗑️ 錄音已刪除', { type: 'success' });
+      openAudioManager(); // 重新載入列表
+    } catch (error) {
+      console.error('刪除失敗:', error);
+      showToast('❌ 刪除失敗', { type: 'error' });
+    }
+  }
+}
+
+async function clearAllAudio() {
+  if (confirm('⚠️ 確定要清空所有錄音嗎？這個操作無法復原！')) {
+    try {
+      const recordings = await AudioDB.loadAllRecordings();
+      for (const recording of recordings) {
+        await AudioDB.deleteRecording(recording.id);
+      }
+      showToast('🗑️ 所有錄音已清空', { type: 'success' });
+      openAudioManager(); // 重新載入列表
+    } catch (error) {
+      console.error('清空失敗:', error);
+      showToast('❌ 清空失敗', { type: 'error' });
+    }
+  }
+}
+
+// 在頁面載入時初始化 IndexedDB 並執行診斷
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('🚀 頁面載入完成，開始初始化...');
+  
+  try {
+    await AudioDB.init();
+    console.log('✅ IndexedDB 音頻管理已初始化');
+    
+    // 載入所有錄音標記到地圖
+    setTimeout(async () => {
+      await loadAudioMarkersToMap();
+    }, 1000);
+    
+    // 延遲執行診斷，讓頁面完全載入
+    setTimeout(async () => {
+      console.log('🏥 開始錄音系統完整診斷...');
+      await runRecordingDiagnostic();
+    }, 2000);
+    
+  } catch (error) {
+    console.error('❌ IndexedDB 初始化失敗:', error);
+    showToast(`❌ 音頻資料庫初始化失敗: ${error.message}`, { type: 'error', duration: 5000 });
+  }
+});
+
+</script>
+
+<!-- 🎵 錄音管理 Modal -->
+<div id="audioManagerModal" class="fixed inset-0 bg-black bg-opacity-50 z-[9999] hidden items-center justify-center">
+  <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden">
+    <div class="p-6 border-b">
+      <div class="flex justify-between items-center">
+        <h2 class="text-xl font-bold text-gray-800">🎵 錄音管理</h2>
+        <button onclick="closeAudioManager()" class="text-gray-500 hover:text-gray-700">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <div id="audioStats" class="text-sm text-gray-600 mt-2">載入中...</div>
+    </div>
+    
+    <div class="p-6 overflow-y-auto max-h-96">
+      <div id="audioList">載入錄音中...</div>
+    </div>
+    
+    <div class="p-4 border-t bg-gray-50">
+      <button onclick="clearAllAudio()" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 text-sm">
+        🗑️ 清空所有錄音
+      </button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

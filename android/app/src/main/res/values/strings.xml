@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Re Memory</string>
+    <string name="title_activity_main">Re Memory</string>
+    <string name="package_name">com.lifemap.app</string>
+    <string name="custom_url_scheme">com.lifemap.app</string>
+</resources>

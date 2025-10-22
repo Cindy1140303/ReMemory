@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+python-dotenv
+requests
+pillow
+pyodbc
+faster-whisper
+ffmpeg-python
+torch
+opencc-python-reimplemented

@@ -1,0 +1,14 @@
+fastapi==0.104.1
+motor[srv]==3.3.2
+pymongo[srv]==4.6.0
+pydantic==2.5.0
+uvicorn==0.24.0
+python-dotenv==1.0.0
+requests==2.31.0
+dnspython==2.4.2
+
+# 可選依賴（保留原有功能）
+# sqlalchemy==1.4.48
+# pyodbc==4.0.39
+# pillow==10.1.0
+# google-generativeai==0.3.2
