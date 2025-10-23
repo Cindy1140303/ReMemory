@@ -1,18 +1,47 @@
-# Exclude virtualenvs, uploads, node modules, build artifacts and env files from Vercel deployment
+# === ✅ 僅保留後端主程式 server.py + 設定檔 ===
+# 其他都忽略，確保打包最小化
+
+# === 忽略 Python 暫存與環境 ===
 .venv/
-venv/
-env/
-.env
-uploads/
-uploads/**
-adminfrontend/node_modules/
-node_modules/
-dist/
-build/
-*.pyc
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
 *.log
-.DS_Store
-.vscode/
-.idea/
+*.csv
+*.zip
+*.tar.gz
+*.bak
+
+# === 忽略 Git 與開發檔案 ===
 .git/
+.gitignore
+README.md
+LICENSE
+__write_test__txt
+
+# === 忽略前端與非後端資料夾 ===
+adminfrontend/
+adminserver/
+backendapi/
+web/
+app/
+shared/
+scripts/
+tests/
+node_modules/
+package-lock.json
+package.json
+
+# === 忽略模型或大型檔案 ===
+*.pt
+*.onnx
+*.h5
+model/
+checkpoints/
+data/
+uploads/
+static/
+media/
