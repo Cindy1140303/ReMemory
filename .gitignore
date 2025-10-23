@@ -54,3 +54,13 @@ ffmpeg-8.0/
 
 # Vercel deployment files
 re-memory-vercel-deploy.zip
+
+# Ignore environment and large folders
+.env
+uploads/
+.venv/
+venv/
+adminfrontend/node_modules/
+node_modules/
+dist/
+build/

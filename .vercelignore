@@ -1,0 +1,18 @@
+# Exclude virtualenvs, uploads, node modules, build artifacts and env files
+.venv/
+venv/
+env/
+.env
+uploads/
+uploads/**
+adminfrontend/node_modules/
+node_modules/
+dist/
+build/
+*.pyc
+__pycache__/
+*.log
+.DS_Store
+.vscode/
+.idea/
+.git/
