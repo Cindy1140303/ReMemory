@@ -6,6 +6,9 @@ const PRECACHE_URLS = [
 	'/static/js/main.js'
 ];
 
+// 後端 API 主機（開發時使用本機後端）
+const BACKEND_ORIGIN = 'http://127.0.0.1:8020';
+
 // 安裝階段：預快取
 self.addEventListener('install', event => {
 	console.log('[SW] install');
@@ -62,32 +65,48 @@ self.addEventListener('fetch', event => {
 
 	// 對 API 請求採用 network-first 策略
 	if (url.pathname.startsWith('/api/')) {
-		event.respondWith(
-			(fetch(req)
-				.then(networkResponse => {
-					// 可以選擇把成功的 API 回應存入快取（視需求）
-					return networkResponse;
-				})
-				.catch(async (err) => {
-					console.warn('[SW] API fetch failed, trying cache or returning offline error', err);
-					// 嘗試從快取取得相同請求的回應
+		event.respondWith((async () => {
+			const backendUrl = BACKEND_ORIGIN + url.pathname + url.search;
+			try {
+				// 建立 fetch 選項，複製 headers
+				const fetchOptions = {
+					method: req.method,
+					headers: {},
+					credentials: 'include',
+					mode: 'cors'
+				};
+				req.headers.forEach((v, k) => { fetchOptions.headers[k] = v; });
+				
+				// 若有 body（非 GET/HEAD），嘗試複製
+				if (req.method !== 'GET' && req.method !== 'HEAD') {
 					try {
-						const cached = await caches.match(req);
-						if (cached) return cached;
+						const bodyBuf = await req.clone().arrayBuffer();
+						fetchOptions.body = bodyBuf;
 					} catch (e) {
-						// ignore
+						// 無法讀取 body，仍嘗試不帶 body 的請求
+						console.warn('[SW] could not clone request body for forwarding', e);
 					}
-					// 回傳可解析的離線錯誤 JSON，避免未處理 promise
-					return new Response(JSON.stringify({
-						error: 'network_error',
-						message: 'Unable to reach API. You appear to be offline or the server is unreachable.'
-					}), {
-						status: 503,
-						headers: { 'Content-Type': 'application/json' }
-					});
-				})
-			)
-		);
+				}
+
+				const networkResponse = await fetch(backendUrl, fetchOptions);
+				return networkResponse;
+			} catch (err) {
+				console.warn('[SW] API fetch failed, trying cache or returning offline error', err);
+				try {
+					const cached = await caches.match(req);
+					if (cached) return cached;
+				} catch (e) {
+					// ignore
+				}
+				return new Response(JSON.stringify({
+					error: 'network_error',
+					message: 'Unable to reach API. You appear to be offline or the server is unreachable.'
+				}), {
+					status: 503,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			}
+		})());
 		return;
 	}
 
