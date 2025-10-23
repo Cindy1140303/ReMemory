@@ -4,10 +4,24 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 from dotenv import load_dotenv
+import logging
 from typing import Optional, List
 import datetime
 import json
-import logging
+
+# -------------- 新增：logging 與明確載入專案根目錄 .env --------------
+# 設定 logger
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+# 優先從專案根目錄載入 .env（adminserver 在子資料夾，原本可能讀不到根目錄的 .env）
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+dotenv_path = os.path.join(project_root, ".env")
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
+    logger.info(f"Loaded .env from project root: {dotenv_path}")
+else:
+    logger.info(".env not found at project root, loaded default locations if any")
 
 # MongoDB
 try:
@@ -17,9 +31,6 @@ try:
 except ImportError:
     HAVE_MONGO = False
     print("WARNING: pymongo not installed. Using fallback memory storage.")
-
-# 環境設定
-load_dotenv()
 
 # FastAPI 應用
 app = FastAPI(title="語憶心聲 Admin API", description="後端資料檢視與分析 API")
@@ -37,30 +48,51 @@ app.add_middleware(
 mongodb_client = None
 db = None
 
-if HAVE_MONGO:
+@app.on_event("startup")
+async def startup_connect_mongo():
+    """
+    延遲在服務啟動時嘗試連線 MongoDB，若失敗會回退到記憶體模式 (HAVE_MONGO = False)。
+    這樣可以避免在模組匯入時因網路/SSL 問題導致整個應用啟動失敗。
+    """
+    global mongodb_client, db, HAVE_MONGO
+
+    if not HAVE_MONGO:
+        logger.info("pymongo not installed - skipping MongoDB connection.")
+        return
+
+    mongodb_uri = os.getenv("MONGODB_URI")
+    if not mongodb_uri:
+        logger.info("MONGODB_URI not set - running in memory mode.")
+        HAVE_MONGO = False
+        return
+
     try:
-        MONGODB_URI = os.getenv("MONGODB_URI")
-        if MONGODB_URI:
-            mongodb_client = MongoClient(MONGODB_URI)
-            DB_NAME = os.getenv("MONGODB_DB_NAME", "lifemap")
-            db = mongodb_client[DB_NAME]
-            # 測試連接
-            mongodb_client.admin.command('ping')
-            print(f"✅ MongoDB 連線成功: {DB_NAME}")
-        else:
-            print("❌ MONGODB_URI 未設定，使用內存儲存")
-            HAVE_MONGO = False
+        # 縮短連線測試的 timeout，避免啟動時卡太久
+        mongodb_client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = os.getenv("MONGODB_DB_NAME", "lifemap")
+        db = mongodb_client[db_name]
+
+        # 測試連線
+        mongodb_client.admin.command("ping")
+        logger.info(f"✅ MongoDB 連線成功: {db_name}")
     except Exception as e:
-        print(f"❌ MongoDB 連線失敗: {e}")
+        logger.exception(f"❌ MongoDB 連線失敗: {e}")
+        mongodb_client = None
+        db = None
         HAVE_MONGO = False
 
 # 記憶體儲存 (MongoDB 不可用時的備案)
 memory_records = []
 
-# 掛載前端靜態檔案
-admin_frontend_path = os.path.join(os.path.dirname(__file__), "../adminfrontend")
+# 掛載前端靜態檔案（使用絕對路徑）
+admin_frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "adminfrontend"))
 if os.path.exists(admin_frontend_path):
     app.mount("/static", StaticFiles(directory=admin_frontend_path), name="static")
+
+# 掛載 uploads 靜態檔案，並確保資料夾存在
+uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads"))
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 # ===== API 端點 =====
 
@@ -74,10 +106,15 @@ async def serve_admin_frontend():
 
 @app.get("/api/health")
 async def health_check():
-    """健康檢查"""
+    """健康檢查（回傳額外診斷資訊以利除錯）"""
+    # 讀取環境變數狀態（不回傳完整 URI，只回傳是否存在）
+    mongodb_uri_present = bool(os.getenv("MONGODB_URI"))
     return {
         "status": "ok",
         "mongodb_connected": HAVE_MONGO and mongodb_client is not None,
+        "mongodb_uri_present": mongodb_uri_present,
+        "uploads_dir": uploads_dir,
+        "admin_frontend_path": admin_frontend_path,
         "timestamp": datetime.datetime.utcnow().isoformat()
     }
 
@@ -139,10 +176,10 @@ async def trigger_analysis(id: str):
             
             return {"ok": True, "message": f"已啟動 ID {id} 的分析任務"}
         else:
-            # 記憶體版本
+            # 記憶體版本（欄位與 MongoDB 版保持一致）
             for record in memory_records:
                 if record["_id"] == id:
-                    record["status"] = "processing"
+                    record["analysis_status"] = "processing"
                     # 模擬分析
                     await simulate_analysis_memory(id)
                     return {"ok": True, "message": f"已啟動 ID {id} 的分析任務"}
@@ -241,46 +278,47 @@ async def simulate_analysis_memory(record_id: str):
     
     for record in memory_records:
         if record["_id"] == record_id:
-            record["status"] = "done"
-            record["text"] = "今天去了台北101，看到很美的夜景，心情很好。"
-            record["region"] = "台北市"
-            record["interest"] = "旅遊, 攝影, 城市景觀"
+            record["analysis_status"] = "done"
+            record["transcribed_text"] = "今天去了台北101，看到很美的夜景，心情很好。"
+            record["region_analysis"] = "台北市"
+            record["interest_analysis"] = "旅遊, 攝影, 城市景觀"
+            record["analysis_completed_at"] = datetime.datetime.utcnow()
             break
 
 # 建立一些測試資料
 def create_test_data():
     """建立測試資料"""
     if not HAVE_MONGO:
-        # 只在記憶體模式下建立測試資料
+        # 只在記憶體模式下建立測試資料（欄位名稱與 MongoDB 版一致）
         test_records = [
             {
                 "_id": "test_001",
                 "filename": "recording_001.wav",
-                "status": "done",
-                "region": "台北市",
-                "interest": "美食, 旅遊",
+                "analysis_status": "done",
+                "region_analysis": "台北市",
+                "interest_analysis": "美食, 旅遊",
                 "created_at": datetime.datetime.utcnow() - datetime.timedelta(days=1),
-                "text": "今天去了信義區吃美食",
+                "transcribed_text": "今天去了信義區吃美食",
                 "file_url": "/uploads/recording_001.wav"
             },
             {
                 "_id": "test_002", 
                 "filename": "recording_002.wav",
-                "status": "processing",
-                "region": "",
-                "interest": "",
+                "analysis_status": "processing",
+                "region_analysis": "",
+                "interest_analysis": "",
                 "created_at": datetime.datetime.utcnow() - datetime.timedelta(hours=2),
-                "text": "",
+                "transcribed_text": "",
                 "file_url": "/uploads/recording_002.wav"
             },
             {
                 "_id": "test_003",
                 "filename": "recording_003.wav", 
-                "status": "",
-                "region": "",
-                "interest": "",
+                "analysis_status": "",
+                "region_analysis": "",
+                "interest_analysis": "",
                 "created_at": datetime.datetime.utcnow() - datetime.timedelta(minutes=30),
-                "text": "",
+                "transcribed_text": "",
                 "file_url": "/uploads/recording_003.wav"
             }
         ]
@@ -291,4 +329,6 @@ create_test_data()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8020, reload=True)
+    # 改為 0.0.0.0 以便外部連線（若不需要可改回 127.0.0.1）
+    logger.info("啟動 API (uvicorn) - host=0.0.0.0 port=8020")
+    uvicorn.run(app, host="0.0.0.0", port=8020, reload=True)
