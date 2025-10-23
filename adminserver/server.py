@@ -1,13 +1,14 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 import os
 from dotenv import load_dotenv
 import logging
 from typing import Optional, List
 import datetime
 import json
+import time
 
 # -------------- 新增：logging 與明確載入專案根目錄 .env --------------
 # 設定 logger
@@ -48,11 +49,19 @@ app.add_middleware(
 mongodb_client = None
 db = None
 
+try:
+    import certifi
+except Exception:
+    certifi = None
+
 @app.on_event("startup")
 async def startup_connect_mongo():
     """
-    延遲在服務啟動時嘗試連線 MongoDB，若失敗會回退到記憶體模式 (HAVE_MONGO = False)。
-    這樣可以避免在模組匯入時因網路/SSL 問題導致整個應用啟動失敗。
+    延遲在服務啟動時嘗試連線 MongoDB，增加重試與 TLS fallback 選項。
+    環境變數：
+      - MONGODB_TLS_INSECURE=true    # (開發) 若預設 TLS 失敗，允許忽略憑證驗證重試
+      - MONGODB_CONNECT_RETRIES=3    # 重試次數（預設 3）
+      - MONGODB_CONNECT_RETRY_DELAY=2 # 每次重試的基礎秒數（指數退避）
     """
     global mongodb_client, db, HAVE_MONGO
 
@@ -66,20 +75,61 @@ async def startup_connect_mongo():
         HAVE_MONGO = False
         return
 
-    try:
-        # 縮短連線測試的 timeout，避免啟動時卡太久
-        mongodb_client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
-        db_name = os.getenv("MONGODB_DB_NAME", "lifemap")
-        db = mongodb_client[db_name]
+    # 連線重試參數
+    retries = int(os.getenv("MONGODB_CONNECT_RETRIES", "3"))
+    base_delay = float(os.getenv("MONGODB_CONNECT_RETRY_DELAY", "2"))
+    allow_insecure = os.getenv("MONGODB_TLS_INSECURE", "false").lower() in ("1", "true", "yes")
 
-        # 測試連線
-        mongodb_client.admin.command("ping")
-        logger.info(f"✅ MongoDB 連線成功: {db_name}")
-    except Exception as e:
-        logger.exception(f"❌ MongoDB 連線失敗: {e}")
-        mongodb_client = None
-        db = None
-        HAVE_MONGO = False
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            logger.info(f"Attempting MongoDB connection (attempt {attempt}/{retries})...")
+            # 使用短 timeout 測試連線
+            mongodb_client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+            db_name = os.getenv("MONGODB_DB_NAME", "lifemap")
+            db = mongodb_client[db_name]
+            # 測試連線
+            mongodb_client.admin.command("ping")
+            logger.info(f"✅ MongoDB 連線成功: {db_name}")
+            return
+        except Exception as e:
+            last_exc = e
+            # 檢查是否為 SSL/TLS 相關錯誤
+            err_msg = str(e).lower()
+            logger.warning(f"MongoDB connect attempt {attempt} failed: {e}")
+            if ("ssl" in err_msg or "tls" in err_msg or "certificate" in err_msg) and allow_insecure:
+                # 嘗試使用不安全的 TLS 選項重試一次（開發用）
+                try:
+                    logger.warning("Detected TLS/SSL issue and MONGODB_TLS_INSECURE=true -> retrying with tlsAllowInvalidCertificates")
+                    connect_kwargs = {
+                        "serverSelectionTimeoutMS": 5000,
+                        "tls": True,
+                        "tlsAllowInvalidCertificates": True
+                    }
+                    # 如果有 certifi，可提供 CA 作為第一選擇（不與 invalidCertificates 同時使用）
+                    if certifi:
+                        connect_kwargs.pop("tlsAllowInvalidCertificates", None)
+                        connect_kwargs["tlsCAFile"] = certifi.where()
+                        logger.info("Using certifi CA bundle for TLS.")
+                    mongodb_client = MongoClient(mongodb_uri, **connect_kwargs)
+                    db = mongodb_client[db_name]
+                    mongodb_client.admin.command("ping")
+                    logger.info(f"✅ MongoDB 連線成功 (insecure mode): {db_name}")
+                    return
+                except Exception as e2:
+                    last_exc = e2
+                    logger.exception(f"Retry with insecure TLS also failed: {e2}")
+            # 若尚未到重試次數，退避後再試
+            if attempt < retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                logger.info(f"Waiting {delay} seconds before next attempt...")
+                time.sleep(delay)
+
+    # 如果到這裡仍失敗，回退到記憶體模式
+    logger.error(f"❌ MongoDB 連線失敗，回退至記憶體模式。最後例外：{last_exc}")
+    mongodb_client = None
+    db = None
+    HAVE_MONGO = False
 
 # 記憶體儲存 (MongoDB 不可用時的備案)
 memory_records = []
@@ -194,22 +244,34 @@ async def trigger_analysis(id: str):
 
 @app.post("/api/upload")
 async def upload_voice_file(file: UploadFile = File(...), metadata: Optional[str] = Form(None)):
-    """上傳語音檔案"""
+    """上傳語音檔案（使用絕對 uploads_dir、檢查大小並避免檔名衝突）"""
     try:
-        # 儲存檔案
-        upload_dir = "uploads"
-        os.makedirs(upload_dir, exist_ok=True)
+        # 變更：使用已宣告的 uploads_dir（絕對路徑）
+        MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 最大 20 MB，可依需求調整
         
-        file_path = os.path.join(upload_dir, file.filename)
+        # 取得安全檔名並加上 uuid 前綴避免衝突
+        import uuid
+        from pathlib import Path
+
+        original_name = Path(file.filename).name  # 移除路徑成份
+        safe_name = original_name.replace("/", "_").replace("\\", "_")
+        unique_name = f"{uuid.uuid4().hex}_{safe_name}"
+        file_path = os.path.join(uploads_dir, unique_name)
+
+        # 讀取內容並檢查大小上限
+        content = await file.read()
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="檔案過大，超過上限")
+
+        # 寫入檔案
         with open(file_path, "wb") as buffer:
-            content = await file.read()
             buffer.write(content)
-        
-        # 創建記錄
+
+        # 創建記錄（使用 uploads_dir 對應的 URL 路徑）
         record = {
-            "filename": file.filename,
+            "filename": original_name,
             "file_path": file_path,
-            "file_url": f"/uploads/{file.filename}",
+            "file_url": f"/uploads/{unique_name}",
             "analysis_status": "pending",
             "region_analysis": "",
             "interest_analysis": "",
@@ -217,7 +279,7 @@ async def upload_voice_file(file: UploadFile = File(...), metadata: Optional[str
             "created_at": datetime.datetime.utcnow(),
             "metadata": json.loads(metadata) if metadata else {}
         }
-        
+
         if HAVE_MONGO and db is not None:
             # 儲存到 MongoDB
             collection = db.voice_records
@@ -227,12 +289,32 @@ async def upload_voice_file(file: UploadFile = File(...), metadata: Optional[str
             # 儲存到記憶體
             record["_id"] = f"mem_{len(memory_records)}"
             memory_records.append(record)
-        
-        return {"ok": True, "record_id": record["_id"], "message": "檔案上傳成功"}
-        
+
+        return {"ok": True, "record_id": record["_id"], "message": "檔案上傳成功", "file_url": record["file_url"]}
+
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error uploading file: {e}")
+        logger.exception(f"Error uploading file: {e}")
         raise HTTPException(status_code=500, detail=f"檔案上傳失敗: {str(e)}")
+
+# ===== 新增：讓 service-worker.js 可從根路徑被取用（避免註冊失敗） =====
+
+@app.get("/service-worker.js")
+async def service_worker_root():
+    """供瀏覽器註冊 service worker 用（把 adminfrontend/service-worker.js 映射到 /service-worker.js）"""
+    sw_path = os.path.join(admin_frontend_path, "service-worker.js")
+    if os.path.exists(sw_path):
+        return FileResponse(sw_path, media_type="application/javascript")
+    return Response(status_code=404)
+
+# 可選：若你有對應的 map 檔案也一併提供
+@app.get("/service-worker.js.map")
+async def service_worker_map():
+    map_path = os.path.join(admin_frontend_path, "service-worker.js.map")
+    if os.path.exists(map_path):
+        return FileResponse(map_path, media_type="application/json")
+    return Response(status_code=404)
 
 # ===== 輔助函數 =====
 

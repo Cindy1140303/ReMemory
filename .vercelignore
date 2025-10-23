@@ -1,4 +1,4 @@
-# Exclude virtualenvs, uploads, node modules, build artifacts and env files
+# Exclude virtualenvs, uploads, node modules, build artifacts and env files from Vercel deployment
 .venv/
 venv/
 env/

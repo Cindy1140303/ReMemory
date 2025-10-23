@@ -64,3 +64,41 @@ adminfrontend/node_modules/
 node_modules/
 dist/
 build/
+
+# Environment and secrets
+.env
+.env.* 
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Node / frontend
+node_modules/
+adminfrontend/node_modules/
+
+# Uploads / user data / large media
+uploads/
+media/
+*.mp4
+*.mov
+*.wav
+
+# Build artifacts
+dist/
+build/
+*.wheel
+*.egg-info/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# Git / misc
+*.zip
+*.tar.gz
