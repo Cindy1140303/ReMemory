@@ -1,0 +1,1872 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>語憶心聲｜AI角色・聊天・生命地圖</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+  body{background:#eaeff4;font-family:"Inter","Microsoft JhengHei",system-ui;overflow:hidden}
+  .screen{position:absolute;inset:0;display:flex;flex-direction:column}
+    .hidden{display:none}
+  /* 強制手機尺寸（桌面版只顯示手機視窗） */
+  .h-app{width:360px;height:640px;background:#fff;border-radius:1.5rem;overflow:hidden;box-shadow:0 25px 50px -12px rgba(0,0,0,.25);position:relative}
+  /* 可選的外框樣式，讓在桌面上更像手機裝置 */
+  .device-frame { padding: 18px; display:flex; align-items:center; justify-content:center; height:100vh; box-sizing:border-box }
+  
+  /* 真實手機環境下填滿整個螢幕 */
+  @media (max-width: 480px) and (pointer: coarse) {
+    .device-frame { 
+      padding: 0; 
+      margin: 0;
+      height: 100vh;
+      width: 100vw;
+    }
+    .h-app { 
+      width: 100vw; 
+      height: 100vh; 
+      border-radius: 0; 
+      box-shadow: none; 
+      max-width: none;
+      max-height: none;
+    }
+  }
+    #map{width:100%;height:30vh;border-radius:0.5rem}
+    .timeline{display:flex;align-items:center;justify-content:center;gap:48px;padding:12px 0;border-top:3px solid #a6622e;background:#fff}
+    .timeline-dot{width:20px;height:20px;border-radius:50%;background:#a6622e}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:8px;cursor:pointer;transition:transform .12s ease, box-shadow .12s ease}
+    .card:hover{transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.12)}
+    .card img {
+      width: 100%;
+      height: auto;            /* 不固定高度，保持原比例 */
+      image-rendering: crisp-edges;  /* 🧡讓像素銳利 */
+      image-rendering: -webkit-optimize-contrast;
+      border-radius: 12px;
+    }
+    /* 🔧 修正地圖層級，確保彈窗浮在最上層 */
+    #map {
+      z-index: 10 !important;
+    }
+    #map-view button {
+      position: relative;
+      z-index: 400; /* ✅ 讓按鈕浮在地圖上 */
+      pointer-events: auto;
+    }
+
+    /* 聊天視圖布局修正 */
+    #chat-view > div:first-child {
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: center !important;
+      padding: 1rem !important;
+      flex: 1 !important;
+      overflow-y: auto !important;
+      margin-top: 56px !important;
+      max-height: calc(100vh - 200px) !important;
+    }
+
+    .character-container {
+      width: 120px !important;
+      height: 120px !important;
+      min-width: 120px !important;
+      min-height: 120px !important;
+      flex-shrink: 0 !important;
+      margin-bottom: 1rem !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+
+    .character-container img {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
+      border-radius: 50% !important;
+    }
+
+    #chat-box {
+      flex: 1 !important;
+      width: 100% !important;
+      min-height: 100px !important;
+      max-height: 200px !important;
+      overflow-y: auto !important;
+      text-align: center !important;
+      padding: 0.5rem !important;
+    }
+
+
+    /* === 底部時間軸 === */
+  .timeline-bottom {
+      position: relative;
+      bottom: 40px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 40px;
+  /* 保持在小卡之上但不凌駕於 modal */
+      z-index: 6000;
+      align-items: flex-start; /* ✅ 讓圓點靠上對齊線條 */
+      pointer-events: auto;
+      background: rgba(255, 255, 255, 0.0); /* ✅ 完全透明 */
+      height: auto;        /* ✅ 取消固定高度，避免擠壓 */
+      padding: 6px 40px;
+      overflow-x: auto;              /* ✅ 允許橫向滾動 */
+      scroll-behavior: smooth;       /* ✅ 平滑滾動 */
+      scrollbar-width: none;         /* ✅ 隱藏卷軸（Firefox） */
+    }
+    .timeline-bottom::-webkit-scrollbar {
+      display: none; /* ✅ 隱藏卷軸（Chrome） */
+    }
+
+
+    /* === 節點樣式 === */
+  .timeline-dot {
+      flex: none;           /* ✅ 不被 flex 拉伸 */
+      /* 讓 z-index 生效並可浮在橫線上方 */
+      position: relative;
+      width: 40px;          /* ✅ 固定寬度 */
+      height: 40px;         /* ✅ 固定高度 */
+      border-radius: 50%;   /* ✅ 變圓形 */
+      background: radial-gradient(circle at 30% 30%, #d9b37c, #8b5e34);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+      cursor: pointer;
+      transition: all 0.25s ease;
+      display: inline-flex;       /* ✅ 讓按鈕內部不被撐開 */
+      align-items: center;
+      justify-content: center;
+      padding: 0 0px 0 0px;
+      margin: 0 10px 0 10px;
+      line-height: 0;
+      /* 確保圓點在橫線之上，但低於 modal */
+      z-index: 7000;
+    }
+
+    /* hover 立體浮起效果 */
+    .timeline-dot:hover {
+      transform: translateY(-3px) scale(1.1);
+      background: radial-gradient(circle at 30% 30%, #e8c58f, #a56f3c);
+      box-shadow: 0 6px 3px rgba(0, 0, 0, 0.35);
+      border-radius: 20px;
+    }
+
+    /* active 狀態 */
+    .timeline-dot.active {
+      transform: scale(1.3);
+      background: radial-gradient(circle at 30% 30%, #ffde9b, #b36b2c);
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+      border-radius: 20px;
+    }
+    /* === 咖啡色橫線 === */
+    .timeline-bottom::before {
+      content: "";
+      position: absolute; /* ✅ 偽元素必須絕對定位 */
+      top: 50%;                      /* ✅ 對齊節點中間 */
+            /* ✅ 線在圓點下方 */
+      left: 0;
+      right: 0;
+      height: 5px;
+      width: var(--line-width, 100%);       /* ✅ 跟內容一樣長 */
+      background: #a6622e;     /* ☕ 咖啡色主題 */
+      border-radius: 20px;
+      opacity: 0.7;
+      /* 把橫線放到較低層，並不攔截圓點互動 */
+      z-index: 0;
+      pointer-events: none;
+      margin: 0 5px 0 5px;
+    }
+      /* === Leaflet marker hover 效果 === */
+    .leaflet-marker-icon {
+      border-radius: 12px; /* ✅ 圓角（可依圖形比例調整） */
+      overflow: hidden;    /* ✅ 防止陰影外溢 */
+      transition: transform 0.25s ease, filter 0.25s ease, box-shadow 0.25s ease;
+      transform-origin: center bottom;
+    }
+
+    .leaflet-marker-icon:hover {
+      transform: scale(1.2); /* 放大一點 */
+      filter: brightness(1.15); /* 提亮 */
+      box-shadow: 0 0 12px rgba(255, 190, 120, 0.8); /* 光暈效果 */
+      z-index: 100 !important; /* 確保浮在最上層 */
+    }
+    #editModal {
+      animation: fadeIn 0.3s ease;
+      /* 確保編輯 modal 永遠在最上層（高於時間軸與節點） */
+      z-index: 200000 !important;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    #editModal textarea {
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    /* === 生命地圖下方的小卡區塊 === */
+    /* === 固定尺寸 + 響應式安全範圍的小卡 === */
+    .photo-card {
+      display: flex;
+      flex-direction: row;       /* ✅ 明確指定橫向排列 */
+      align-items: center;
+      justify-content: flex-start;
+      background: #fff;
+      border-radius: 12px;
+      padding: 10px 12px;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+      gap: 12px;
+      width: 90%;
+      max-width: min(340px, 95vw);  /* ✅ 最大不超過螢幕寬度 */
+      height: clamp(90px, 22vw, 100px);  /* ✅ 根據螢幕自動縮放 */
+      max-height: 100px;            /* ✅ 最大高度限制 */
+      margin: 0 auto;
+      overflow: hidden;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .photo-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+    }
+
+    /* 左側圖片 */
+    .photo-card img {
+      width: clamp(50px, 24vw, 60px);   /* ✅ 在小螢幕下自動縮小 */
+      height: clamp(50px, 24vw, 60px);
+      max-height: 60px;
+      border-radius: 10px;
+      object-fit: contain;          /* ✅ 等比例縮小顯示完整 */
+      object-position: left;
+      flex-shrink: 0;
+      background: #ffff;
+      border: 1px solid #d1d1d1;
+    }
+
+    /* 右側文字區塊 */
+    .photo-card .info {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;   /* ✅ 垂直置中 */
+      text-align: left;          /* ✅ 文字靠左 */
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .photo-card .info .title {
+      font-weight: bold;
+      color: #7a4a22;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      font-size: clamp(13px, 3.5vw, 15px); /* ✅ 響應式字體 */
+    }
+
+    .photo-card .info .date {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 2px;
+    }
+
+    .photo-card .info div:last-child {
+      font-size: 14px;
+      color: #444;
+      line-height: 1.4;
+      max-height: 3.5em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* === 響應式（手機螢幕 < 400px） === */
+    @media (max-width: 400px) {
+      .photo-card {
+        height: 90px;
+        max-width: 300px;
+        gap: 8px;
+        padding: 8px 10px;
+      }
+      .photo-card img {
+        width: 70px;
+        height: 70px;
+      }
+      .photo-card .info .title {
+        font-size: 13px;
+      }
+      .photo-card .info div:last-child {
+        font-size: 12px;
+      }
+    }
+    #photo-card-container {
+      position: relative;
+      margin-top: -50px;   /* ⬆️ 讓小卡往上靠近地圖，依你要的距離可調整 */
+      z-index: 10;       /* ✅ 浮在地圖上層 */
+      pointer-events: auto;
+      transition: margin-top 0.3s ease;
+    }
+
+    /* 小卡本體樣式 */
+    #photo-card-container .card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      box-shadow: 0 2px 10px #ffde9b;
+      padding: 10px;
+      text-align: center;
+      width: 90%;
+      margin: 0 auto;
+      position: relative;
+      z-index: 5001;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    /* hover 效果（微浮起） */
+    #photo-card-container .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 18px #ffde9b;
+    }
+
+
+    /* 小卡上浮顯示 */
+    .card-popup {
+      animation: popup 0.4s ease forwards;
+    }
+
+    @keyframes popup {
+      from { transform: translateY(30px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    /* === 節點發光動畫 === */
+    .timeline-dot.active {
+      transform: scale(1.3);
+      background: radial-gradient(circle at 30% 30%, #ffde9b, #b36b2c);
+      box-shadow: 
+        0 0 3px rgba(255, 200, 100, 0.9);   /* 發亮核心 */
+      border-radius: 100%; /* ✅ 確保仍是圓形 */
+      transition: all 0.25s ease;
+    }
+
+    /* === 刪除提示小視窗 === */
+    #deleteConfirm {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 500;
+    }
+    #deleteConfirm .box {
+      background: #fff;
+      border-radius: 1rem;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+      width: 90%;                 /* ✅ 改為百分比，適配螢幕 */
+      max-width: 320px;           /* ✅ 最大寬度限制，避免太寬 */
+      padding: 16px;
+      text-align: center;
+      animation: fadeIn 0.3s ease;
+      box-sizing: border-box;      /* ✅ 確保 padding 不造成超寬 */
+      word-wrap: break-word;       /* ✅ 長字不撐出螢幕 */
+    }
+
+    /* 🔹 在極小螢幕（例如 iPhone SE）自動縮小字體與間距 */
+    @media (max-width: 400px) {
+      #deleteConfirm .box {
+        padding: 14px;
+        max-width: 90%;
+      }
+      #deleteConfirm .box p {
+        font-size: 14px;
+      }
+      #deleteConfirm button {
+        font-size: 14px;
+        padding: 6px 12px;
+      }
+    }
+
+    #deleteConfirm button {
+      margin: 8px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+    }
+    #deleteConfirm .confirm {
+      background: #e57373;
+      color: #fff;
+    }
+    #deleteConfirm .cancel {
+      background: #ddd;
+      color: #444;
+    }
+
+    .spinner{width:64px;height:64px;border-radius:50%;border:6px solid #e7e1db;border-top-color:#8b5e34;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .is-recording{animation:pulse 1s infinite;border:3px solid #ef4444}
+    @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.7)}70%{box-shadow:0 0 0 10px rgba(239,68,68,0)}}
+    /* hero-text：置中且靠近 header，下方留白與字體微調以匹配 UI 截圖 */
+    #char-empty .hero-text {
+      position: absolute;
+      left: 1rem;
+      right: 1rem;
+      top: 30rem; /* 可再微調：數字越小越靠上 */
+      text-align: center;
+      margin: 0;
+      color: #7a4a22;
+      font-size: 1.15rem;
+      line-height: 1.6;
+      font-weight: 700;
+      padding: 0.4rem 0;
+      pointer-events: none; /* 避免蓋到下方按鈕的點擊 */
+    }
+    @media (max-width: 420px) {
+      #char-empty .hero-text {
+        top: 2.8rem;
+        font-size: 1.05rem;
+      }
+    }
+    /* 莫蘭迪綠色漸層（低飽和、灰化、柔和） */
+    .btn-map-gradient {
+      /* Morandi-inspired muted greens */
+      background:#4A7056;
+      color: #fdfdfd; /* 稍微偏暖的淺色文字，與莫蘭迪色系協調 */
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.75rem;
+      transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+      /* 更柔和的陰影，帶一點灰調 */
+      box-shadow: 0 2px 6px rgba(60, 72, 64, 0.08);
+      border: 1px solid rgba(120,130,118,0.08);
+    }
+    .btn-map-gradient:hover {
+      transform: translateY(-1px);
+      /* hover 輕微加深顏色而不是變亮，符合莫蘭迪沉穩特性 */
+      filter: brightness(0.96);
+      box-shadow: 0 6px 10px rgba(60,72,64,0.10);
+    }
+  </style>
+</head>
+
+<body class="flex items-center justify-center h-screen">
+  <div class="device-frame">
+    <div class="h-app">
+    <!-- Header：全頁共用 -->
+    <header id="main-header" 
+      class="flex items-center justify-between bg-[#4a6fa5] text-white py-3 px-3 
+            absolute top-0 left-0 right-0 rounded-t-2xl shadow-md"
+      style="z-index:8000 !important">
+      <!-- 返回按鈕 -->
+      <button id="backBtn" onclick="handleBack()" class="text-sm opacity-90">← 返回</button>
+
+      <!-- 標題 -->
+  <h1 id="pageTitle" class="text-lg font-semibold text-right px-12 flex-grow text-white select-none">AI角色選擇</h1>
+
+      <!-- 三點選單 (僅聊天畫面顯示) -->
+      <div id="chatMenu" class="relative">
+        <button onclick="toggleDropdown('chat-dropdown')" 
+          class="text-xl opacity-80 hover:bg-[#39587e] rounded-full px-2 mr-8 transition">⋮</button>
+
+        <!-- 下拉選單 -->
+        <div id="chat-dropdown" 
+          class="absolute right-0 mt-3 w-28 bg-white rounded-lg shadow-xl py-1 z-20 hidden">
+          <button onclick="showModal('功能未實作：語言')" 
+            class="flex items-center px-4 py-2 text-sm text-gray-700 w-full text-left hover:bg-gray-100">🌐 語言</button>
+          <button onclick="openShareModal()" 
+            class="flex items-center px-4 py-2 text-sm text-gray-700 w-full text-left hover:bg-gray-100">🔗 分享</button>
+          <button onclick="showModal('功能未實作：設定')" 
+            class="flex items-center px-4 py-2 text-sm text-gray-700 w-full text-left hover:bg-gray-100">⚙️ 設定</button>
+        </div>
+      </div>
+
+      <!-- 關閉按鈕 -->
+      <button class="text-lg opacity-80 ml-2" onclick="handleClose()">✖</button>
+    </header>
+
+  <!-- 全域 toast（顯示在手機框內） -->
+  <div id="toast-container" class="fixed top-4 left-1/2 transform -translate-x-1/2 z-4000 hidden" style="width:88%"></div>
+
+  <!-- 🌟 分享視窗（放在 body 中，確保能被任何頁面呼叫） -->
+  <div id="shareModal" 
+    class="fixed inset-0 bg-black/40 flex items-center justify-center hidden transition" style="z-index:200100;">
+    <div class="bg-white rounded-2xl w-11/12 max-w-sm p-6 shadow-2xl text-center relative mx-4">
+      <h2 class="text-lg font-bold text-gray-800 mb-4">分享這個頁面</h2>
+      
+      <div class="flex flex-col gap-3">
+        <button onclick="shareToFacebook()" 
+          class="flex items-center justify-center gap-2 bg-[#1877F2] text-white font-semibold py-3 px-4 rounded-xl hover:bg-[#145BD1] transition">
+          <img src="https://www.svgrepo.com/show/452196/facebook-1.svg" class="w-5 h-5" alt=""> Facebook
+        </button>
+        <button onclick="shareToLine()" 
+          class="flex items-center justify-center gap-2 bg-[#06C755] text-white font-semibold py-3 px-4 rounded-xl hover:bg-[#05B04D] transition">
+          <img src="https://www.line.me/static/img/icon-line_1.png" class="w-5 h-5" alt=""> LINE
+        </button>
+        <button onclick="copyLink()" 
+          class="flex items-center justify-center gap-2 bg-gray-200 text-gray-800 font-semibold py-3 px-4 rounded-xl hover:bg-gray-300 transition">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 17l4 4 4-4m0-10l-4-4-4 4m4 14V3"/></svg>
+          複製連結
+        </button>
+      </div>
+
+      <!-- 關閉按鈕 -->
+      <button onclick="closeShareModal()" 
+        class="absolute top-2 right-3 text-gray-500 hover:text-gray-800 text-lg font-bold">✕</button>
+    </div>
+  </div>
+
+
+
+    <!-- A. 初始畫面 -->
+    <section id="char-empty" class="screen">
+      <div class="px-4 py-5 text-center flex-1 mt-[56px] relative"> <!-- 預留 header 高度 -->
+
+        <p class="text-2xl mt-[50px] font-bold text-[#7a4a22] leading-relaxed">
+          目前無角色<br>可以利用按鈕生成角色！
+        </p>
+        <div class="mt-8">
+          <textarea id="charPrompt" rows="3"
+            class="w-full rounded-2xl border border-gray-300 bg-gray-100 text-gray-600 text-center p-4"
+            placeholder="錄音文字顯示區｜此區文字可直接修改"></textarea>
+        </div>
+        <div class="mt-8 flex items-center justify-center gap-10">
+          <button id="recordBtn" class="px-8 py-2 rounded-xl bg-[#c08955] text-white shadow">🎤  錄音</button>
+          <button id="charSend0" class="px-8 py-2 rounded-xl bg-[#c08955] text-white shadow">▶  送出</button>
+        </div>
+        <div class="mt-5">
+          <button id="charAuto" class="w-full py-3 rounded-xl bg-[#e7c8a3] text-[#6d492b] font-bold shadow">
+            ✨ 自 動 生 成
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- B. 載入中 -->
+    <section id="char-loading" class="screen hidden">
+      <div class="flex flex-col items-center justify-center flex-1 gap-4 mt-[56px]">
+        <div class="spinner"></div>
+        <div class="text-[#7a4a22] font-semibold text-lg">載入中，AI 正在繪製角色中...</div>
+      </div>
+    </section>
+
+    <!-- C. 九宮格 -->
+    <section id="char-list" class="screen hidden">
+      <div class="p-4 text-center flex-1 overflow-y-auto mt-[56px]">
+        <p class="text-xl font-bold text-[#7a4a22] leading-relaxed mb-3">
+          👋 選擇你的AI夥伴角色～
+        </p>
+        <div id="cardGrid" class="grid grid-cols-3 gap-3"></div>
+      </div>
+    </section>
+
+    <!-- D. 聊天 -->
+
+
+    <section id="chat-view" class="screen hidden relative">
+      <div class="flex flex-col items-center gap-4 p-4 overflow-y-auto mt-[30px]">
+        <div class="character-container">
+          <img id="chat-avatar" src="https://placehold.co/144x144/f9d853/4a6fa5?text=AI" alt="AI頭像" />
+        </div>
+      </div>
+      <!-- 聊天內容區 - 留出底部輸入區空間 -->
+      <div class="flex flex-col items-center gap-4 p-4 overflow-y-auto mt-[56px] mb-[180px]">
+        <div id="chat-box" class="flex flex-col gap-3 text-center text-gray-800 text-lg font-semibold leading-relaxed p-4 w-full">
+          <div class="text-gray-500 text-sm">🎙 點擊下方麥克風開始對話</div>
+        </div>
+      </div>
+
+      <!-- 固定底部輸入區 -->
+      <div class="absolute bottom-0 left-0 right-0 border-t border-gray-200 bg-white py-3 flex flex-col items-center">
+        <!-- 輸入欄 -->
+        <textarea id="chatInput" rows="2"
+          class="w-11/12 rounded-xl border border-gray-300 bg-gray-50 text-gray-700 p-3 text-sm mb-3"
+          placeholder="錄音或輸入想說的話..."></textarea>
+
+        <!-- 按鈕區域 -->
+        <div class="flex flex-col items-center gap-3 w-full">
+          <!-- 麥克風與送出按鈕 -->
+          <div class="flex items-center gap-6 justify-center">
+            <button id="recordBtnChat" class="px-4 py-2 flex items-center justify-center rounded-xl bg-[#d9b37c] text-white shadow text-sm">🎤錄音</button>
+            <button id="chatSend" class="px-4 py-2 rounded-xl bg-[#c08955] text-white shadow text-sm">▶ 送出</button>
+          </div>
+
+          <!-- 到生命地圖按鈕 -->
+          <button id="toMapBtn" onclick="goToMap()" class="px-8 py-2 btn-map-gradient text-sm">到生命地圖</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- E. 地圖 -->
+    <section id="map-view" class="screen hidden">
+      <div class="p-2 mt-[56px]">
+        <div id="map"></div>
+        <div class="mt-2 flex gap-2 justify-center">
+          <button class="flex-1 bg-green-200 py-2 rounded opacity-80 hover:opacity-100">◀</button>
+          <button class="flex-1 bg-green-200 py-2 rounded opacity-80 hover:opacity-100">▶</button>
+        </div>
+      </div>
+      <div id="photo-card-container" class="px-3 flex-1 flex items-center justify-center text-gray-600 text-sm">
+        點擊地圖上的生命樹標記，查看回憶照片。
+      </div>
+      <!-- 🌟 頂部時間軸 -->
+      <div id="timeline" class="timeline-bottom"></div>
+
+    </section>
+  <!-- 🌟 小卡編輯畫面 -->
+  <!-- 改成 absolute，讓定位與寬度相對於 .h-app（寬度 360px 的手機框） -->
+  <div id="editModal" class="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 hidden">
+  <div class="bg-white w-[78%] max-w-xs rounded-2xl shadow-2xl p-3 relative flex flex-col box-border">
+        <h2 class="text-lg font-bold text-center text-[#7a4a22] mb-3">✏️ 編輯回憶小卡</h2>
+
+        <textarea id="editTextArea" 
+          class="w-full flex-1 border border-gray-300 rounded-xl p-3 text-gray-800 mb-3 resize-none"
+          rows="8" placeholder="這裡顯示完整錄音文字..."></textarea>
+
+    <!-- 照片預覽與上傳 -->
+    <div class="flex flex-col items-center mb-3">
+      <img id="editPreview" class="rounded-xl max-h-40 object-cover mb-2 hidden"/>
+      <input type="file" id="editUpload" accept="image/*" class="text-sm"/>
+      <div id="editUploadStatus" class="text-sm text-green-600 mt-2 hidden"></div>
+    </div>
+
+    <!-- 按鈕列 -->
+    <div class="flex justify-between mt-3">
+      <button id="btnSaveEdit" class="bg-amber-400 text-[#5b3a17] px-4 py-2 rounded-lg font-bold">💾 儲存</button>
+      <button id="btnCancelEdit" class="bg-red-300 text-white px-4 py-2 rounded-lg">取消</button>
+    </div>
+    </div>
+  </div>
+</div>
+  <!-- 🌟 刪除確認視窗 -->
+  <div id="deleteConfirm">
+    <div class="box">
+      <p class="text-lg font-bold text-[#7a4a22] mb-3">🗑 確定要刪除此回憶嗎？</p>
+      <p class="text-sm text-gray-600 mb-4">刪除後將無法復原。</p>
+      <div>
+        <button class="cancel" onclick="closeDeleteConfirm()">取消</button>
+        <button class="confirm" onclick="confirmDelete()">刪除</button>
+      </div>
+    </div>
+
+      <!-- 🌟 付費示意視窗（聲音生成圖片需付費） -->
+      <div id="payModal" class="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-60 hidden">
+        <div class="bg-white w-[86%] max-w-xs rounded-xl shadow-2xl p-4 relative flex flex-col box-border text-center">
+          <h3 class="text-lg font-bold text-[#7a4a22] mb-2">🔒 需要付費啟用</h3>
+          <p class="text-sm text-gray-600 mb-4">使用「聲音產生圖片」功能需付費解鎖。示意價格：NT$30 / 次。</p>
+          <div id="payPreview" class="text-sm text-gray-800 p-2 mb-4 bg-gray-50 rounded" style="min-height:48px;white-space:pre-wrap;text-align:left;"></div>
+          <div class="flex gap-3 justify-center">
+            <button id="btnConfirmPay" class="px-4 py-2 bg-[#e7c8a3] rounded-xl shadow">付費啟用 (NT$30)</button>
+            <button id="btnCancelPay" class="px-4 py-2 bg-gray-200 rounded-xl shadow">取消</button>
+          </div>
+        </div>
+      </div>
+  </div>
+
+</div>
+ 
+
+<script>    
+// === Hugging Face 與本機 API 設定 ===
+const BACKEND_URL = "http://127.0.0.1:8010"; // 🚀 FastAPI 執行位址（開發：使用 8010，避免 8000 衝突）
+const HF_IMAGE_URL = `${BACKEND_URL}/generate-gpt`;    // 🎨 生圖端點
+const HF_PHOTO_URL = `${BACKEND_URL}/api/photo/upload`; // 🖼 照片上傳
+// ===== Hugging Face API 設定 =====
+const HF_ASR_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3";
+const HF_CHAT_URL =  `${BACKEND_URL}/api/chat`;
+
+// === 地圖 ===
+// 使用保護式初始化，避免在開發或熱重載期間重複建立 Leaflet 地圖
+let map;
+if (window.__lifeMap && window.__lifeMap instanceof L.Map) {
+  console.log('重用已存在的 Leaflet map instance');
+  map = window.__lifeMap;
+} else {
+  map = L.map('map', { attributionControl: false }).setView([23.9739, 120.9820], 8);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  // 暫存於 window 以便未來重用（例如熱重載或腳本被多次執行）
+  window.__lifeMap = map;
+}
+
+// 🌟 自訂 marker 圖示（必須放在最前面！）
+const customIcon = L.icon({
+  iconUrl: "assets/marker.png",
+  iconSize: [30, 30],
+  iconAnchor: [22, 44],
+  popupAnchor: [0, -40]
+});
+
+
+// === 頁面切換 ===
+const views = {
+  empty: document.getElementById('char-empty'),
+  loading: document.getElementById('char-loading'),
+  list: document.getElementById('char-list'),
+  chat: document.getElementById('chat-view'),
+  map: document.getElementById('map-view')
+};
+const pageTitle = document.getElementById('pageTitle');
+const chatMenu = document.getElementById('chatMenu');
+
+let currentView = "empty";
+
+// 切換畫面並更新標題 + 三點選單顯示狀態
+function switchView(name) {
+  currentView = name;
+  for (const key in views) {
+    views[key].classList.add("hidden");
+  }
+  views[name].classList.remove("hidden");
+
+  // 動態更新標題（保留 chatMenu 在所有頁面可見）
+  switch (name) {
+    case "empty":
+    case "loading":
+    case "list":
+      pageTitle.textContent = "AI角色選擇";
+      break;
+    case "chat":
+      pageTitle.textContent = "聊天平台";
+      break;
+    case "map":
+      pageTitle.textContent = "生命地圖";
+      break;
+  }
+
+  // 地圖重繪
+  if (name === "map") {
+    setTimeout(() => map.invalidateSize(), 200);
+    loadMemories();      // ✅ 每次切換地圖時載入回憶
+    renderTimeline();    // ✅ 同步生成底部節點
+  }
+
+  // 確保三點選單（#chatMenu）在所有頁面都可見
+  try { if (chatMenu) chatMenu.classList.remove('hidden'); } catch (e) {}
+}
+
+// 返回邏輯
+function handleBack() {
+  if (currentView === "map") {
+    switchView("chat");
+  } else if (currentView === "chat") {
+    // 回到角色列表頁（而不是 character）
+    switchView("list");
+  } else if (currentView === "list" || currentView === "loading") {
+    switchView("empty");
+  } else {
+    showToast('目前已在最前頁', { duration: 1800 });
+  }
+}
+
+  // === 三點選單顯示 / 隱藏 ===
+function toggleDropdown(id) {
+  const dropdown = document.getElementById(id);
+  // 先關掉其他 dropdown（避免重疊）
+  document.querySelectorAll('.dropdown, [id$="-dropdown"]').forEach(el => {
+    if (el !== dropdown) el.classList.add('hidden');
+  });
+  // 切換當前 dropdown 顯示
+  dropdown.classList.toggle('hidden');
+}
+// 開關分享視窗 - 強硬化版本
+function openShareModal() {
+  try {
+    console.log('openShareModal: attempting to show share modal');
+    const el = document.getElementById("shareModal");
+    if (!el) {
+      console.error('openShareModal: shareModal element not found in DOM');
+      return;
+    }
+
+    // 強制移動到 body 最後（確保不被其他容器限制）
+    if (el.parentElement !== document.body) {
+      document.body.appendChild(el);
+      console.log('openShareModal: moved shareModal to document.body');
+    }
+
+    // 強硬設定所有必要屬性
+    el.classList.remove("hidden");
+    el.style.display = 'flex';
+    el.style.position = 'fixed';
+    el.style.top = '0';
+    el.style.left = '0';
+    el.style.width = '100%';
+    el.style.height = '100%';
+    el.style.zIndex = '2147483647'; // 最高 z-index
+    el.style.pointerEvents = 'auto';
+    el.style.opacity = '1';
+    el.style.visibility = 'visible';
+    el.style.background = 'rgba(0, 0, 0, 0.4)';
+    el.style.alignItems = 'center';
+    el.style.justifyContent = 'center';
+
+    // 確保內部 modal 內容在手機上可見
+    const modalContent = el.querySelector('div');
+    if (modalContent) {
+      modalContent.style.maxWidth = '90vw';
+      modalContent.style.maxHeight = '90vh';
+      modalContent.style.overflow = 'auto';
+      modalContent.style.margin = '0 16px';
+    }
+
+    // 暫時禁用其他高層級元素的互動（防止被遮擋）
+    const highZElements = document.querySelectorAll('[style*="z-index"]');
+    highZElements.forEach(elem => {
+      if (elem !== el && elem.style.zIndex && parseInt(elem.style.zIndex) > 10000) {
+        elem.setAttribute('data-temp-pointer-events', elem.style.pointerEvents || 'auto');
+        elem.style.pointerEvents = 'none';
+      }
+    });
+
+    console.log('openShareModal: modal should now be visible with highest z-index and responsive design');
+  } catch (e) { 
+    console.error('openShareModal failed', e); 
+  }
+}
+
+function closeShareModal() {
+  try {
+    const el = document.getElementById("shareModal");
+    if (!el) return;
+    
+    el.classList.add("hidden");
+    el.style.display = 'none';
+    
+    // 恢復其他元素的 pointer-events
+    const tempElements = document.querySelectorAll('[data-temp-pointer-events]');
+    tempElements.forEach(elem => {
+      elem.style.pointerEvents = elem.getAttribute('data-temp-pointer-events');
+      elem.removeAttribute('data-temp-pointer-events');
+    });
+    
+    console.log('closeShareModal: modal hidden and restored other elements');
+  } catch (e) { 
+    console.error('closeShareModal failed', e); 
+  }
+}
+
+// 分享功能
+function shareToFacebook() {
+  const url = encodeURIComponent(window.location.href);
+  const fbURL = `https://www.facebook.com/sharer/sharer.php?u=${url}`;
+  window.open(fbURL, "_blank", "width=600,height=500");
+}
+
+function shareToLine() {
+  const url = encodeURIComponent(window.location.href);
+  const text = encodeURIComponent("和我一起體驗這個 AI 互動吧！");
+  const lineURL = `https://social-plugins.line.me/lineit/share?url=${url}&text=${text}`;
+  window.open(lineURL, "_blank", "width=600,height=500");
+}
+
+function copyLink() {
+  const url = window.location.href;
+  navigator.clipboard.writeText(url).then(() => {
+    showToast('✔️ 已複製連結到剪貼簿！', { type: 'success' });
+  }).catch(err => {
+    showToast('❌ 複製失敗，請手動複製。', { type: 'error' });
+    console.error(err);
+  });
+}
+
+// 通用的簡單提示 modal（占位）
+function showModal(message) {
+  // 若未定義詳細 modal，使用 alert 作為回退
+  try {
+    // 若未來要做更漂亮的 modal，可在手機框內顯示 toast
+    showToast(message, { duration: 2500 });
+  } catch (e) {
+    console.log('showModal:', message);
+  }
+}
+
+
+// 若點擊外部區域，則自動關閉下拉選單
+window.addEventListener('click', function (e) {
+  const menuBtn = e.target.closest('button[onclick^="toggleDropdown"]');
+  const dropdown = e.target.closest('.dropdown, [id$="-dropdown"]');
+  if (!menuBtn && !dropdown) {
+    document.querySelectorAll('.dropdown, [id$="-dropdown"]').forEach(el => el.classList.add('hidden'));
+  }
+});
+
+// ======= Toast (在手機框內顯示非阻塞提示) =======
+function showToast(message, opts = {}) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const id = `toast-${Date.now()}`;
+  const type = opts.type || 'info';
+  const duration = opts.duration || 3000;
+
+  const el = document.createElement('div');
+  el.id = id;
+  el.className = 'px-4 py-2 rounded-lg text-sm shadow-md mb-2 text-white';
+  el.style.transition = 'opacity 200ms ease, transform 200ms ease';
+  el.style.opacity = '0';
+  el.style.transform = 'translateY(-6px)';
+
+  if (type === 'success') el.style.background = '#16a34a';
+  else if (type === 'error') el.style.background = '#dc2626';
+  else el.style.background = '#374151';
+
+  el.innerText = message;
+  container.appendChild(el);
+  container.classList.remove('hidden');
+
+  // animate in
+  requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; });
+
+  setTimeout(() => {
+    // animate out
+    el.style.opacity = '0'; el.style.transform = 'translateY(-6px)';
+    setTimeout(() => { try { container.removeChild(el); } catch (e) {} }, 250);
+  }, duration);
+}
+
+
+  // 關閉按鈕
+  function handleClose() {
+    if (confirm("確定要關閉嗎？")) window.close();
+  }
+
+    // === 模擬角色生成 ===
+    const charAuto=document.getElementById('charAuto');
+    const cardGrid=document.getElementById('cardGrid');
+    charAuto.onclick=()=>{switchView('loading');setTimeout(()=>{renderCharacterCards();switchView('list');},2000);};
+
+    const demoCharacters=[
+      {name:"阿青",img:"assets/char1.png"},
+      {name:"阿福",img:"assets/char2.png"},
+      {name:"小光",img:"assets/char3.png"},
+      {name:"小綠",img:"assets/char4.png"},
+      {name:"元氣君",img:"assets/char5.png"},
+      {name:"暖暖",img:"assets/char6.png"},
+      {name:"阿哲",img:"assets/char7.png"},
+      {name:"小夏",img:"assets/char8.png"},
+      {name:"阿勇",img:"assets/char9.png"}
+    ];
+
+    function renderCharacterCards(){
+      cardGrid.innerHTML='';
+      demoCharacters.forEach(c=>{
+        const el=document.createElement('div');
+        el.className='card';
+        el.innerHTML=`<img src="${c.img}" alt="${c.name}">
+                      <div class="pt-1 text-center font-bold text-sm">${c.name}</div>`;
+        el.onclick=()=>selectCharacter(c);
+        cardGrid.appendChild(el);
+      });
+    }
+  function selectCharacter(c) {
+    const chatAvatar = document.getElementById("chat-avatar");
+    const chatBox = document.getElementById("chat-box");
+
+    // 更新頭像與對話文字
+    chatAvatar.src = c.img;
+    chatBox.innerHTML = `
+      <div class="text-gray-800 font-semibold text-lg">
+        嗨！我是 ${c.name} ～ 一起聊聊吧！
+      </div>
+    `;
+
+    // 切換到聊天頁
+    switchView("chat");
+  }
+
+
+
+// === 錄音功能：結果填入輸入框 ===
+
+const recordBtn = document.getElementById("recordBtn");
+const charPrompt = document.getElementById("charPrompt");
+
+let mediaRecorder, audioChunks = [], isRecording = false;
+
+recordBtn.onclick = async () => {
+  if (!isRecording) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
+        charPrompt.value = "（語音辨識中...）";
+
+        const result = await transcribeAudio(audioBlob);
+
+        // 顯示辨識結果於輸入框
+        charPrompt.value = result || "（語音辨識失敗）";
+      };
+
+      mediaRecorder.start();
+      recordBtn.classList.add("is-recording");
+      recordBtn.textContent = "🟥 停止";
+      isRecording = true;
+    } catch (err) {
+  showToast('❌ 無法啟用麥克風，請檢查權限。', { type: 'error' });
+      console.error(err);
+    }
+  } else {
+    mediaRecorder.stop();
+    recordBtn.classList.remove("is-recording");
+    recordBtn.textContent = "🎤  錄音";
+    isRecording = false;
+  }
+};
+// === 共用錄音功能 ===
+function setupRecorder(buttonId, targetTextareaId) {
+  const btn = document.getElementById(buttonId);
+  const target = document.getElementById(targetTextareaId);
+  let mediaRecorder, audioChunks = [], isRecording = false;
+
+  btn.onclick = async () => {
+    if (!isRecording) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.onstop = async () => {
+          target.value = "（語音辨識中...）";
+          const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
+          const text = await transcribeAudio(audioBlob);
+          target.value = text || "（語音辨識失敗）";
+        };
+
+        mediaRecorder.start();
+        btn.classList.add("is-recording");
+        btn.textContent = "🟥 停止";
+        isRecording = true;
+      } catch (err) {
+    showToast('❌ 無法啟用麥克風權限', { type: 'error' });
+        console.error(err);
+      }
+    } else {
+      mediaRecorder.stop();
+      btn.classList.remove("is-recording");
+      btn.textContent = "🎤  錄音";
+      isRecording = false;
+    }
+  };
+}
+
+
+function appendMessage(sender, text) {
+  const chatBox = document.getElementById("chat-box");
+  const msg = document.createElement("div");
+  msg.className = sender === "user" ? "text-right text-blue-700" : "text-left text-brown-700";
+  msg.textContent = sender === "user" ? `🧑‍💬 ${text}` : `🤖 小光：${text}`;
+  chatBox.appendChild(msg);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// 🎧 語音 → 文字（呼叫 FastAPI 的 /api/transcribe）
+async function transcribeAudio(audioBlob) {
+  try {
+  const formData = new FormData();
+  formData.append("file", audioBlob, "recording.webm");
+  // 要求後端回傳繁體中文（如果後端有 opencc 可用）
+  formData.append("target_script", "tw");
+
+    const response = await fetch(`${BACKEND_URL}/api/transcribe`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      console.error("轉錄失敗", await response.text());
+      return "（語音辨識失敗）";
+    }
+
+    const result = await response.json();
+    console.log("ASR 回傳結果：", result);
+
+    // 支援 Hugging Face 回傳格式（有些模型是 list，有些是 dict）
+    if (Array.isArray(result)) {
+      return result[0]?.text || result[0]?.generated_text || "（語音辨識失敗）";
+    }
+    return result.text || result.generated_text || "（語音辨識失敗）";
+
+  } catch (e) {
+    console.error("ASR Error:", e);
+    // 顯示在手機框內，並提示啟動後端
+    showToast('❌ 語音轉文字失敗，請確認後端服務已啟動（127.0.0.1:8010）', { type: 'error', duration: 4000 });
+    return "（語音辨識失敗）";
+  }
+}
+// === 聊天送出功能 ===
+document.getElementById("chatSend").onclick = async () => {
+  const inputBox = document.getElementById("chatInput");
+  const text = inputBox.value.trim();
+  if (!text) return showToast('請先輸入或錄音內容！', { type: 'error' });
+
+  try {
+    // ✅ 呼叫後端 API 建立新回憶
+    const res = await fetch(`${BACKEND_URL}/api/memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    console.log("記錄已新增：", data);
+
+    // ✅ 更新對話框提示
+    appendMessage("user", text);
+    appendMessage("ai", "✅ 已將這段文字儲存到生命地圖！");
+    inputBox.value = "";
+
+      // 立即重新載入回憶並更新時間軸，確保新節點立即顯示
+      try {
+        await loadMemories();
+        await renderTimeline();
+      } catch (e) {
+        console.warn('chatSend: failed to refresh timeline after creating memory', e);
+      }
+
+  } catch (err) {
+    console.error("儲存失敗：", err);
+    showToast('❌ 無法儲存，請稍後再試', { type: 'error' });
+  }
+};
+
+
+// 💬 小光回覆（Gemma 模型）
+async function getAIReply(text) {
+  try {
+    const response = await fetch(HF_CHAT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+    const data = await response.json();
+    return data[0]?.generated_text || "我聽不太懂，再說一次嗎？";
+  } catch (err) {
+    console.error("AI Error:", err);
+    return "（小光暫時沒回應）";
+  }
+}
+
+
+renderCharacterCards();
+switchView('empty');
+
+// === 從後端載入所有回憶 ===
+// === 從後端載入所有回憶，並同步畫 marker + 折線 + 時間軸 ===
+async function loadMemories() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/memories`);
+    if (!res.ok) throw new Error("Failed to load memories");
+
+  const memories = await res.json();
+  // cache for global access (used by delegated handlers)
+  try { window._memories = memories; } catch (e) { window._memories = memories; }
+    console.log("🧭 從後端取回 memories：", memories);
+
+    const container = document.getElementById("photo-card-container");
+    const timeline = document.getElementById("timeline");
+
+    // 無資料處理（僅在後端確實回空陣列時清空時間軸）
+    if (!memories.length) {
+      console.log('後端回傳空回憶陣列，清空時間軸');
+      container.innerHTML = `<div class="text-gray-500 text-center mt-4">
+        目前還沒有任何回憶記錄 🌱
+      </div>`;
+      timeline.innerHTML = "";
+      if (window.memoryMarkers) window.memoryMarkers.forEach(m => map.removeLayer(m));
+      if (window.memoryPolyline) map.removeLayer(window.memoryPolyline);
+      return;
+    }
+
+    // 🔹 清除舊圖層
+    if (window.memoryMarkers) window.memoryMarkers.forEach(m => map.removeLayer(m));
+    if (window.memoryPolyline) map.removeLayer(window.memoryPolyline);
+    window.memoryMarkers = [];
+
+    const validPoints = [];
+
+    // === 1️⃣ 在地圖上畫 Marker ===
+    memories.forEach(m => {
+      if (m.lat !== null && m.lng !== null) {
+        const marker = L.marker([m.lat, m.lng], { icon: customIcon })
+          .addTo(map)
+          .bindPopup(`<b>${m.place || "未知地點"}</b><br>${m.text}`);
+        marker.on("click", () => openMemoryCard({ currentTarget: marker }, m));
+        window.memoryMarkers.push(marker);
+        validPoints.push([m.lat, m.lng]);
+      }
+    });
+
+    // === 2️⃣ 不在地圖上畫折線（僅在底部時間軸顯示） ===
+    // 只使用 markers 的範圍來聚焦地圖，不在地圖上繪製折線
+    if (validPoints.length > 1) {
+      try {
+        const bounds = L.latLngBounds(validPoints);
+        map.fitBounds(bounds);
+      } catch (e) {
+        console.warn('fitBounds 失敗：', e);
+      }
+      // 不在地圖建立 polyline，保留 window.memoryPolyline 為 null
+      window.memoryPolyline = null;
+    } else if (validPoints.length === 1) {
+      map.setView(validPoints[0], 10);
+    }
+
+    // === 3️⃣ 生成時間軸節點 ===
+    timeline.innerHTML = "";
+    timeline.style.display = "flex";
+    // 依 created_at 排序，確保時間軸為時間順序（若沒有 created_at 則保留原順序）
+    try {
+      memories.sort((a,b) => {
+        if (!a.created_at || !b.created_at) return 0;
+        return new Date(a.created_at) - new Date(b.created_at);
+      });
+    } catch (e) { /* non-fatal, keep original order */ }
+
+    memories.forEach((m, idx) => {
+      const dot = document.createElement("button");
+      dot.className = "timeline-dot";
+      dot.title = m.place || "未命名地點";
+      // 如果後端沒有提供 id，使用 fallback id（不另外輸出 debug）
+      dot.dataset.id = (m.id === undefined || m.id === null) ? `missing-${idx}` : m.id;
+      dot.onclick = (e) => openMemoryCard(e, m);
+      timeline.appendChild(dot);
+
+      // 🔸 長按刪除功能（使用共用 helper，支援 touch & mouse & 右鍵）
+      attachLongPress(dot, dot.dataset.id);
+    });
+
+    // 若未產生任何節點，顯示簡短提示
+    if (timeline.children.length === 0) {
+      timeline.innerHTML = `<div class="text-gray-500 text-sm">（尚未有可顯示的時間軸節點）</div>`;
+    }
+
+    // 🔹 更新橫線長度
+    requestAnimationFrame(() => {
+      const dots = timeline.querySelectorAll(".timeline-dot");
+      const gap = 80;
+      const lineLength = (dots.length - 1) * gap + 200;
+      timeline.style.setProperty("--line-width", `${lineLength}px`);
+      // debug: log each dot's computed style
+      dots.forEach((d, i) => {
+        const cs = window.getComputedStyle(d);
+        console.log(`timeline dot[${i}] id=${d.dataset.id} display=${cs.display} opacity=${cs.opacity} z-index=${cs.zIndex}`);
+      });
+    });
+
+  } catch (err) {
+    console.error("載入回憶失敗", err);
+    const container = document.getElementById("photo-card-container");
+    const timeline = document.getElementById("timeline");
+    // 顯示錯誤提示，並清空時間軸（避免顯示偽造資料）
+    container.innerHTML = `<div class="text-red-600 text-center mt-4">無法從後端載入回憶，請確認後端服務已啟動（${BACKEND_URL}）。</div>`;
+    timeline.innerHTML = "";
+    if (window.memoryMarkers) window.memoryMarkers.forEach(m => map.removeLayer(m));
+    if (window.memoryPolyline) map.removeLayer(window.memoryPolyline);
+    window.memoryMarkers = [];
+    window.memoryPolyline = null;
+    // 不再使用 mock 測試資料，以免混淆真實資料庫結果
+  }
+}
+
+let deleteTargetId = null; // 🔸 暫存要刪除的 memory id
+
+// === 點擊地圖標記：對應節點發光 ===
+function highlightTimelineDot(memoryId) {
+  const dots = document.querySelectorAll(".timeline-dot");
+  dots.forEach(d => {
+    d.classList.remove("active");
+    if (d.dataset.id == memoryId) d.classList.add("active");
+  });
+}
+// 共用 long-press 與右鍵刪除綁定，支援 mouse 與 touch
+function attachLongPress(el, memoryId, options = {}) {
+  const holdDuration = options.holdDuration || 800;
+  let holdTimer = null;
+
+  const start = (e) => {
+    // 忽略右鍵的 mousedown
+    if (e.type === 'mousedown' && e.button === 2) return;
+    clear();
+    holdTimer = setTimeout(() => {
+      openDeleteConfirm(memoryId);
+      holdTimer = null;
+    }, holdDuration);
+  };
+
+  const clear = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } };
+
+  el.addEventListener('mousedown', start);
+  el.addEventListener('mouseup', clear);
+  el.addEventListener('mouseleave', clear);
+
+  el.addEventListener('touchstart', start, { passive: true });
+  el.addEventListener('touchend', clear);
+  el.addEventListener('touchcancel', clear);
+
+  // 右鍵也觸發刪除（並阻止瀏覽器選單）
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openDeleteConfirm(memoryId);
+  });
+}
+// === 畫出標記並加點擊事件 ===
+function renderMarkers(memories) {
+  map.eachLayer(layer => {
+    if (layer instanceof L.Marker) map.removeLayer(layer);
+  });
+
+  memories.forEach(m => {
+    if (m.lat && m.lng) {
+      const marker = L.marker([m.lat, m.lng], { icon: customIcon }).addTo(map);
+      marker.on("click", () => highlightTimelineDot(m.id));
+    }
+  });
+}
+
+// === 左右鍵控制時間軸 ===
+// 使用安全方式在 DOM 存在時做滾動操作，並安全綁定按鈕事件
+function scrollTimelineLeft() {
+  const tl = document.getElementById("timeline");
+  if (tl) tl.scrollBy({ left: -150, behavior: "smooth" });
+}
+
+function scrollTimelineRight() {
+  const tl = document.getElementById("timeline");
+  if (tl) tl.scrollBy({ left: 150, behavior: "smooth" });
+}
+
+// 安全綁定左右按鈕（map-view 內的兩個綠色按鈕）
+const _navBtns = document.querySelectorAll('.bg-green-200');
+if (_navBtns && _navBtns.length >= 2) {
+  _navBtns[0].onclick = scrollTimelineLeft;
+  _navBtns[1].onclick = scrollTimelineRight;
+}
+
+// === 顯示小卡 ===
+function showMemoryCard(m) {
+  const container = document.getElementById("photo-card-container");
+  // 改為靜態顯示（編輯動作改由集中式的 #editModal 處理，維持一致的視窗大小）
+  container.innerHTML = `
+    <div class="bg-white rounded-xl shadow p-3 w-full text-center">
+      <div class="font-bold text-[#7a4a22] mb-1">${m.place || "未命名地點"}</div>
+      <div class="text-sm text-gray-600 mb-2">${new Date(m.created_at).toLocaleString()}</div>
+
+      <!-- 文字顯示（非內嵌編輯） -->
+      <div id="previewText-${m.id}" class="w-full p-2 mb-2 text-gray-800 text-left" style="white-space:pre-wrap;">${m.text}</div>
+
+      <!-- 照片預覽（若無則提示） -->
+      ${m.photo_url 
+        ? `<img id="previewImg-${m.id}" src="${BACKEND_URL}${m.photo_url}" class="rounded-lg w-full mb-2">`
+        : `<div id="previewImg-${m.id}" class="text-gray-400 mb-2">（尚未上傳照片）</div>`}
+
+      <div class="flex gap-2 justify-center mt-2">
+        <button id="openEditBtn-${m.id}" class="px-4 py-2 bg-[#e7c8a3] rounded shadow">✏️ 編輯</button>
+      </div>
+    </div>
+  `;
+
+  // 綁定編輯按鈕，開啟統一的編輯 modal（#editModal）以維持一致大小與行為
+  const editBtn = document.getElementById(`openEditBtn-${m.id}`);
+  if (editBtn) editBtn.onclick = () => openEditModal(m);
+}
+
+
+async function goToMap() {
+  // ✅ 切換頁面並載入所有回憶
+  switchView("map");
+  await loadMemories();
+  await renderTimeline();
+
+  // ✅ 若目前沒有任何回憶，仍然顯示地圖背景
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/memories`);
+    if (!res.ok) throw new Error('後端回傳錯誤');
+    const memories = await res.json();
+    if (!memories.length) {
+      document.getElementById("photo-card-container").innerHTML =
+        `<div class="text-gray-500 text-center mt-4">
+           目前還沒有任何回憶記錄，快來新增一筆吧 🌱
+         </div>`;
+    } else {
+      map.setView([23.9739, 120.9820], 8); // 聚焦台灣
+    }
+  } catch (err) {
+    console.error('goToMap fetch memories 錯誤：', err);
+    document.getElementById("photo-card-container").innerHTML = `<div class="text-red-600 text-center mt-4">無法連線到後端，請啟動後端或檢查網路（${BACKEND_URL}）。</div>`;
+  }
+  setTimeout(() => map.invalidateSize(), 200); // ✅ 只需這行確保 Leaflet 重繪
+}
+let currentOpenId = null; // ✅ 用來記錄目前開啟的小卡 ID
+
+// === 生成時間軸節點（安全 wrapper） ===
+async function renderTimeline() {
+  try {
+    // 使用 loadMemories 作為單一來源（loadMemories 含錯誤 fallback 與 mock）
+    await loadMemories();
+  } catch (err) {
+    console.error('renderTimeline 捕獲錯誤：', err);
+    // loadMemories 已處理 mock fallback，這裡不再清空 timeline
+  }
+}
+// 初次呼叫，讓頁面嘗試載入（若後端失敗，會使用 mock）
+renderTimeline();
+// === 開啟刪除確認視窗 ===
+function openDeleteConfirm(memoryId) {
+  deleteTargetId = memoryId;
+  document.getElementById("deleteConfirm").style.display = "flex";
+}
+
+// === 關閉刪除確認視窗 ===
+function closeDeleteConfirm() {
+  deleteTargetId = null;
+  document.getElementById("deleteConfirm").style.display = "none";
+}
+
+// === 確認刪除 ===
+async function confirmDelete() {
+  if (!deleteTargetId) return;
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/memories/${deleteTargetId}`, { method: "DELETE" });
+    if (res.ok) {
+      showToast('🗑 已刪除回憶', { type: 'success' });
+      await loadMemories();
+      await renderTimeline();
+    } else {
+      showToast('❌ 刪除失敗', { type: 'error' });
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('⚠️ 發生錯誤，請稍後再試', { type: 'error' });
+  } finally {
+    closeDeleteConfirm();
+  }
+}
+
+// === 點擊節點開小卡 ===
+function openMemoryCard(e, memory) {
+  const container = document.getElementById("photo-card-container");
+
+  // ✅ 如果再次點同一個節點 → 關閉小卡
+  if (currentOpenId === memory.id) {
+    container.innerHTML = ""; // 清空小卡
+    currentOpenId = null;
+    document.querySelectorAll(".timeline-dot").forEach(d => d.classList.remove("active"));
+    return;
+  }
+
+  // ✅ 更新目前開啟的 ID
+  currentOpenId = memory.id;
+
+  // === 顯示小卡內容 ===
+  container.innerHTML = `
+    <div class="photo-card card-popup">
+      ${
+        memory.photo_url
+          ? `<img src="${BACKEND_URL}${memory.photo_url}" alt="照片" />`
+          : `<div class="text-gray-400 italic flex items-center justify-center w-[90px] h-[90px] bg-gray-100 rounded-lg">
+               (無照片)
+             </div>`
+      }
+      <!-- 右側文字 -->
+      <div class="info">
+        <div class="title">${memory.place || "未命名地點"}</div>
+        <div class="date">${new Date(memory.created_at).toLocaleString()}</div>
+        <div>${memory.text}</div>
+        <div class="text-amber-600 text-xs mt-1">
+          <button id="openEditBtn-card-${memory.id}" class="text-amber-600 text-xs">✏️ 編輯</button>
+        </div>
+      </div>
+
+    </div>
+`;
+
+  //節點高亮
+  document.querySelectorAll(".timeline-dot").forEach(d => d.classList.remove("active"));
+  // 支援兩種情況：
+  // 1) 點擊時間軸上的 DOM button（e.currentTarget 為該 element）
+  // 2) 從 Leaflet marker 觸發（傳入的 e.currentTarget 不是 DOM element），用 memory.id 找對應的 .timeline-dot
+  let targetEl = null;
+  try {
+    if (e && e.currentTarget && e.currentTarget.classList) {
+      targetEl = e.currentTarget;
+    }
+  } catch (err) {
+    // ignore
+  }
+  if (!targetEl) {
+    targetEl = document.querySelector(`.timeline-dot[data-id="${memory.id}"]`);
+  }
+  if (targetEl && targetEl.classList) {
+    targetEl.classList.add("active");
+    // 若節點位於不可見區，平滑滾動到可視範圍
+    try { targetEl.scrollIntoView({ behavior: 'smooth', inline: 'center' }); } catch (e) {}
+  }
+  // 綁定卡片內的編輯按鈕
+  const cardEditBtn = document.getElementById(`openEditBtn-card-${memory.id}`);
+  if (cardEditBtn) cardEditBtn.onclick = () => openEditModal(memory);
+}
+
+// 🌟 開啟編輯畫面
+function openEditModal(memory) {
+  const modal = document.getElementById("editModal");
+  const textArea = document.getElementById("editTextArea");
+  const preview = document.getElementById("editPreview");
+
+  modal.classList.remove("hidden");
+  try { modal.style.display = 'flex'; modal.style.position = 'fixed'; modal.style.zIndex = '10050'; } catch (e) {}
+  textArea.value = memory.text || "";
+  
+  if (memory.photo_url) {
+    preview.src = `${BACKEND_URL}${memory.photo_url}`;
+    preview.classList.remove("hidden");
+  } else {
+    preview.classList.add("hidden");
+  }
+
+  // 綁定上傳事件（guard 實體存在）
+  const upload = document.getElementById("editUpload");
+  if (upload) {
+    upload.onchange = async (e) => {
+    try { if (e && e.preventDefault) e.preventDefault(); } catch(e) {}
+    try { if (e && e.stopPropagation) e.stopPropagation(); } catch(e) {}
+    const statusEl = document.getElementById('editUploadStatus');
+    try {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      // 顯示上傳中
+      statusEl.classList.remove('hidden');
+      statusEl.classList.remove('text-red-600');
+      statusEl.classList.add('text-gray-600');
+      statusEl.textContent = '上傳中...';
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`${BACKEND_URL}/api/memories/photo/${memory.id}`, {
+        method: "POST",
+        body: formData
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || '上傳失敗');
+      }
+
+      const data = await res.json();
+      if (data.photo_url) {
+        preview.src = `${BACKEND_URL}${data.photo_url}`;
+        preview.classList.remove("hidden");
+        statusEl.classList.remove('text-gray-600');
+        statusEl.classList.add('text-green-600');
+        statusEl.textContent = '✅ 照片已上傳';
+      } else {
+        throw new Error('伺服器未回傳 photo_url');
+      }
+    } catch (err) {
+      console.error('upload error', err);
+      statusEl.classList.remove('text-gray-600','text-green-600');
+      statusEl.classList.add('text-red-600');
+      statusEl.textContent = '❌ 上傳失敗';
+    } finally {
+      // 確保 modal 不會在上傳後意外關閉或導致視圖回到首頁
+      try { document.getElementById('editModal').classList.remove('hidden'); } catch (e) {}
+    }
+    };
+  } else {
+    console.warn('openEditModal: editUpload element not found');
+  }
+
+  // 儲存修改
+  const btnSaveEl = document.getElementById("btnSaveEdit");
+  if (btnSaveEl) {
+    btnSaveEl.onclick = async () => {
+    const newText = textArea.value.trim();
+    const res = await fetch(`${BACKEND_URL}/api/memories/${memory.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: newText })
+    });
+
+    if (res.ok) {
+        showToast('✅ 已儲存修改！', { type: 'success' });
+      closeEditModal();
+      await loadMemories();
+    } else {
+        showToast('❌ 儲存失敗', { type: 'error' });
+    }
+    };
+  } else {
+    console.warn('openEditModal: btnSaveEdit element not found');
+  }
+
+  // 返回／取消
+  const btnBackEl = document.getElementById("btnBackEdit");
+  if (btnBackEl) btnBackEl.onclick = closeEditModal;
+  const btnCancelEl = document.getElementById("btnCancelEdit");
+  if (btnCancelEl) btnCancelEl.onclick = closeEditModal;
+}
+
+// 🌟 關閉編輯畫面
+function closeEditModal() {
+  const em = document.getElementById("editModal");
+  if (em) {
+    em.classList.add("hidden");
+    try { em.style.display = 'none'; } catch (e) {}
+  }
+}
+
+
+
+renderCharacterCards();
+switchView('empty');
+// 初始化兩個錄音按鈕
+setupRecorder("recordBtn", "charPrompt");   // 角色頁錄音
+setupRecorder("recordBtnChat", "chatInput"); // 聊天頁錄音 ✅
+
+// === 安全觸發：確保地圖與節點載入 ===
+document.addEventListener("DOMContentLoaded", () => {
+  console.log("🌍 DOM Loaded，初始化地圖檢查");
+  if (map) {
+    setTimeout(() => {
+      map.invalidateSize();
+      loadMemories();
+    }, 500);
+  } else {
+    console.error("❌ map 未初始化");
+  }
+});
+
+
+// === 綁定第一頁送出按鈕 (#charSend0) 到付費 modal（聲音→圖需付費） ===
+try {
+  const charSendBtn = document.getElementById('charSend0');
+  const payModal = document.getElementById('payModal');
+  const payPreview = document.getElementById('payPreview');
+  const btnConfirmPay = document.getElementById('btnConfirmPay');
+  const btnCancelPay = document.getElementById('btnCancelPay');
+  const charPromptEl = document.getElementById('charPrompt');
+
+  if (charSendBtn) {
+    charSendBtn.addEventListener('click', (e) => {
+      console.log('charSend0 clicked');
+      // 把當前的輸入或錄音文字放到付費預覽區
+      try { payPreview.textContent = (charPromptEl && charPromptEl.value) ? charPromptEl.value : ''; } catch (err) { console.warn('payPreview set failed', err); }
+      if (payModal) {
+        // 強制成固定定位並提高層級，避免被其他元素覆蓋
+        payModal.style.display = 'flex';
+        payModal.style.position = 'fixed';
+        payModal.style.zIndex = '9999';
+        console.log('Opening payModal');
+      } else {
+        console.warn('payModal element not found');
+      }
+    });
+  } else {
+    console.warn('#charSend0 not found when binding pay modal');
+  }
+
+  if (btnCancelPay) {
+    btnCancelPay.addEventListener('click', () => {
+      if (payModal) payModal.style.display = 'none';
+    });
+  }
+
+  if (btnConfirmPay) {
+    btnConfirmPay.addEventListener('click', async () => {
+      // 付費成功的示意處理：關閉 modal 並觸發實際送出流程
+      showToast('🔓 已完成付費，正在啟用功能...', { type: 'success' });
+      if (payModal) payModal.style.display = 'none';
+
+      // 嘗試從角色頁的輸入欄取文字並送出（若有 performChatSend 函式則呼叫）
+      try {
+        const txt = (charPromptEl && charPromptEl.value) ? charPromptEl.value : '';
+        if (typeof performChatSend === 'function') {
+          await performChatSend(txt);
+        } else {
+          // fallback: 建立記憶（與聊天送出相同的 API）
+          if (txt && txt.trim()) {
+            await fetch(`${BACKEND_URL}/api/memories`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: txt })
+            });
+            appendMessage('user', txt);
+            // 🚫 不再重複顯示 AI 回覆，讓上層 chatSend 保持唯一訊息
+            try {
+              await fetch(`${BACKEND_URL}/api/memories`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: txt })
+              });
+              showToast('✅ 已將這段文字儲存到生命地圖（付費功能）！', { type: 'success' });
+              await loadMemories();
+              await renderTimeline();
+            } catch (e) {
+              console.warn(e);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Confirm pay action failed', err);
+        showToast('❌ 付費處理失敗，請稍後再試', { type: 'error' });
+      }
+    });
+  }
+} catch (err) {
+  console.error('bind charSend0 -> payModal failed', err);
+}
+
+
+// Debug helper: 檢查 #charSend0 是否被遮蓋，並嘗試將它帶到最上層以恢復可點擊性
+setTimeout(() => {
+  try {
+    const btn = document.getElementById('charSend0');
+    if (!btn) return console.warn('#charSend0 not found in DOM during clickable-check');
+    const rect = btn.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const topEl = document.elementFromPoint(cx, cy);
+    console.log('clickable-check: element at charSend0 center ->', topEl, topEl && topEl.id, topEl && topEl.className);
+
+    // 若按鈕上方的元素不是按鈕本身或其子孫，視為被遮蓋
+    if (topEl && topEl !== btn && !btn.contains(topEl)) {
+      console.warn('charSend0 appears to be covered by:', topEl);
+      // 強制提升按鈕層級與啟用 pointer events
+      try { btn.style.position = 'relative'; } catch (e) {}
+      try { btn.style.zIndex = '10001'; } catch (e) {}
+      try { btn.style.pointerEvents = 'auto'; } catch (e) {}
+      // 也提升父容器層級
+      try { if (btn.parentElement) btn.parentElement.style.zIndex = '10001'; } catch (e) {}
+      console.log('charSend0 z-index/pointer-events adjusted to attempt to restore clickability');
+    }
+  } catch (err) {
+    console.error('clickable-check failed', err);
+  }
+}, 300);
+
+// 把關鍵 modal 移到 body 末端，避免被父容器的 stacking context 或 overflow 擋住
+try {
+  ['payModal','editModal','deleteConfirm','shareModal'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.parentElement && el.parentElement !== document.body) {
+      try {
+        document.body.appendChild(el);
+        console.log(`moved ${id} to document.body`);
+        // ensure hidden modals use display:none when hidden
+        if (el.classList.contains('hidden')) el.style.display = 'none';
+      } catch (e) {
+        console.warn('failed to move', id, e);
+      }
+    }
+  });
+} catch (err) {
+  console.warn('move modals to body failed', err);
+}
+
+// Document-level click forwarder: 若點擊被覆蓋但落在 charSend0 的範圍內，替按鈕觸發 click
+try {
+  const tryForwardClick = (e) => {
+    const btn = document.getElementById('charSend0');
+    if (!btn) return;
+    // 如果點擊目標就是按鈕（或按鈕內），不處理
+    if (e.target && (e.target === btn || btn.contains(e.target))) return;
+    const rect = btn.getBoundingClientRect();
+    const x = e.clientX, y = e.clientY;
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      console.log('document click forwarder: forwarding click to #charSend0');
+      try {
+        // dispatch a synthetic click on the button
+        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      } catch (err) {
+        console.error('forward click failed', err);
+      }
+    }
+  };
+  // use capture to run early
+  document.addEventListener('click', tryForwardClick, true);
+} catch (err) {
+  console.error('add document click forwarder failed', err);
+}
+
+// Delegated handler for dynamically generated edit buttons (openEditBtn-<id>)
+document.addEventListener('click', function (e) {
+  try {
+    const btn = e.target.closest && e.target.closest('[id^="openEditBtn-"]');
+    if (!btn) return;
+    const idMatch = btn.id.match(/^openEditBtn-(.+)$/);
+    if (!idMatch) return;
+    const midRaw = idMatch[1];
+    // find memory from cache
+    const mems = window._memories || [];
+    let m = null;
+    // support fallback ids like 'missing-<index>' produced elsewhere
+    const missingMatch = String(midRaw).match(/^missing-(\d+)$/);
+    if (missingMatch) {
+      const idx = parseInt(missingMatch[1]);
+      if (!isNaN(idx) && idx >= 0 && idx < mems.length) m = mems[idx];
+    }
+    if (!m) {
+      m = mems.find(x => String(x.id) === String(midRaw));
+    }
+    if (!m) {
+      // as a last resort, try numeric conversion
+      const maybeNum = Number(midRaw);
+      if (!isNaN(maybeNum)) m = mems.find(x => Number(x.id) === maybeNum);
+    }
+    if (m) {
+      openEditModal(m);
+    } else {
+      console.warn('edit button clicked but memory not found for id', midRaw, 'memories_count=', mems.length);
+    }
+  } catch (err) {
+    console.error('delegated edit button handler error', err);
+  }
+});
+document.addEventListener("DOMContentLoaded", () => {
+  const share = document.getElementById('shareModal');
+  if (share && share.parentElement !== document.body) {
+    document.body.appendChild(share);
+    console.log("✅ shareModal 已移出手機框架");
+  }
+  const style = document.createElement("style");
+  style.textContent = `
+    #shareModal { position: fixed !important; z-index: 99999 !important; }
+    #shareModal > div { z-index: 100000 !important; }
+  `;
+  document.head.appendChild(style);
+  
+  // 強化分享按鈕綁定（多重保險）
+  const shareButtons = document.querySelectorAll('button[onclick*="openShareModal"], button:contains("分享")');
+  shareButtons.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      console.log('Share button clicked via delegated listener');
+      e.preventDefault();
+      e.stopPropagation();
+      openShareModal();
+    });
+  });
+  
+  // 也可以通過文字內容找分享按鈕
+  document.querySelectorAll('button').forEach(btn => {
+    if (btn.textContent && btn.textContent.includes('分享')) {
+      btn.addEventListener('click', (e) => {
+        console.log('Share button found by text content, opening modal');
+        e.preventDefault();
+        e.stopPropagation();
+        openShareModal();
+      });
+    }
+  });
+});
+</script>
+
+</body>
+</html>
