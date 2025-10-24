@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "adminserver/server.py", "use": "@vercel/python" },
+    { "src": "adminfrontend/**", "use": "@vercel/static" },
+    { "src": "adminfrontend/**/*.css", "use": "@vercel/static" },
+    { "src": "adminfrontend/**/*.js", "use": "@vercel/static" },
+    { "src": "adminfrontend/**/*.png", "use": "@vercel/static" },
+    { "src": "adminfrontend/**/*.jpg", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "adminserver/server.py" },
+    { "src": "/(.*)", "dest": "/adminfrontend/$1" }
+  ]
+}

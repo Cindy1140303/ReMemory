@@ -23,12 +23,9 @@ LICENSE
 __write_test__txt
 
 # === 忽略前端與非後端資料夾 ===
-adminfrontend/
-adminserver/
 backendapi/
 web/
 app/
-shared/
 scripts/
 tests/
 node_modules/

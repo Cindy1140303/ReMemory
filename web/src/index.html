@@ -566,7 +566,7 @@
     <section id="chat-view" class="screen hidden relative">
       <div class="flex flex-col items-center gap-4 p-4 overflow-y-auto mt-[30px]">
         <div class="character-container">
-          <img id="chat-avatar" src="https://placehold.co/144x144/f9d853/4a6fa5?text=AI" alt="AI頭像" />
+          <img id="chat-avatar" src="./assets/char_placeholder.png" alt="AI頭像" />
         </div>
       </div>
       <!-- 聊天內容區 - 留出底部輸入區空間 -->
@@ -668,15 +668,32 @@
  
 
 <script>    
-// === Hugging Face 與本機 API 設定 ===
-const BACKEND_URL = "http://127.0.0.1:8010"; // 🚀 FastAPI 執行位址（開發：使用 8010，避免 8000 衝突）
-const HF_IMAGE_URL = `${BACKEND_URL}/generate-gpt`;    // 🎨 生圖端點
-const HF_PHOTO_URL = `${BACKEND_URL}/api/photo/upload`; // 🖼 照片上傳
-// ===== Hugging Face API 設定 =====
-const HF_ASR_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3";
-const HF_CHAT_URL =  `${BACKEND_URL}/api/chat`;
+// === 後端 API 位址（請指向你在 Vercel 的後端） ===
+// 已部署的後端（Vercel）
+const BACKEND_URL = "https://re-memory-eight.vercel.app";
 
-// === 地圖 ===
+// 新增：優先使用你放在 repo 內的 shared 資源資料夾
+// 當你用 Live Server 從 ReMemory 根目錄啟動 (例: http://127.0.0.1:5500/)，
+// 則 /shared/assets/xxx.png 會對應到 C:\Users\love3\Downloads\ReMemory\shared\assets\xxx.png
+const LOCAL_ASSETS = window.__LOCAL_ASSETS__ || "/shared/assets";
+
+  // 若要打包到 APK，確保把 web/src/assets/* 放在最終輸出資料夾內
+  // 範例使用： `${LOCAL_ASSETS}/char1.png`
+
+  // 修改：使用 LOCAL_ASSETS 來建立 demoCharacters 圖片絕對 URL
+  const demoCharacters = [
+    {name:"阿青", img:`${LOCAL_ASSETS}/char1.png`},
+    {name:"阿福", img:`${LOCAL_ASSETS}/char2.png`},
+    {name:"小光", img:`${LOCAL_ASSETS}/char3.png`},
+    {name:"小綠", img:`${LOCAL_ASSETS}/char4.png`},
+    {name:"元氣君", img:`${LOCAL_ASSETS}/char5.png`},
+    {name:"暖暖", img:`${LOCAL_ASSETS}/char6.png`},
+    {name:"阿哲", img:`${LOCAL_ASSETS}/char7.png`},
+    {name:"小夏", img:`${LOCAL_ASSETS}/char8.png`},
+    {name:"阿勇", img:`${LOCAL_ASSETS}/char9.png`}
+  ];
+
+    // === 地圖 ===
 // 使用保護式初始化，避免在開發或熱重載期間重複建立 Leaflet 地圖
 let map;
 if (window.__lifeMap && window.__lifeMap instanceof L.Map) {
@@ -690,8 +707,9 @@ if (window.__lifeMap && window.__lifeMap instanceof L.Map) {
 }
 
 // 🌟 自訂 marker 圖示（必須放在最前面！）
+// 修改：使用 LOCAL_ASSETS 路徑
 const customIcon = L.icon({
-  iconUrl: "assets/marker.png",
+  iconUrl: `${LOCAL_ASSETS}/marker.png`,
   iconSize: [30, 30],
   iconAnchor: [22, 44],
   popupAnchor: [0, -40]
@@ -882,6 +900,28 @@ function showModal(message) {
 }
 
 
+async function uploadRecording(audioBlob, text = '') {
+	try {
+		const formData = new FormData();
+		formData.append('file', audioBlob, 'recording.webm');
+		if (text) formData.append('text', text);
+
+		const res = await fetch(`${BACKEND_URL}/api/memories`, {
+			method: 'POST',
+			body: formData
+		});
+
+		if (!res.ok) {
+			const txt = await res.text().catch(()=>null);
+			throw new Error(txt || `HTTP ${res.status}`);
+		}
+		return await res.json(); // 預期回傳建立的 memory JSON (含 id)
+	} catch (err) {
+		console.error('uploadRecording error', err);
+		throw err;
+	}
+}
+
 // 若點擊外部區域，則自動關閉下拉選單
 window.addEventListener('click', function (e) {
   const menuBtn = e.target.closest('button[onclick^="toggleDropdown"]');
@@ -935,25 +975,35 @@ function showToast(message, opts = {}) {
     const cardGrid=document.getElementById('cardGrid');
     charAuto.onclick=()=>{switchView('loading');setTimeout(()=>{renderCharacterCards();switchView('list');},2000);};
 
-    const demoCharacters=[
-      {name:"阿青",img:"assets/char1.png"},
-      {name:"阿福",img:"assets/char2.png"},
-      {name:"小光",img:"assets/char3.png"},
-      {name:"小綠",img:"assets/char4.png"},
-      {name:"元氣君",img:"assets/char5.png"},
-      {name:"暖暖",img:"assets/char6.png"},
-      {name:"阿哲",img:"assets/char7.png"},
-      {name:"小夏",img:"assets/char8.png"},
-      {name:"阿勇",img:"assets/char9.png"}
-    ];
-
     function renderCharacterCards(){
       cardGrid.innerHTML='';
       demoCharacters.forEach(c=>{
         const el=document.createElement('div');
         el.className='card';
-        el.innerHTML=`<img src="${c.img}" alt="${c.name}">
-                      <div class="pt-1 text-center font-bold text-sm">${c.name}</div>`;
+        const imgEl = document.createElement('img');
+        imgEl.src = c.img;
+        // 若本機檔案不存在，先嘗試本機 placeholder，再退到線上佔位圖
+        imgEl.onerror = function() {
+          // 避免無限迴圈：若已經嘗試過 placeholder 就使用線上圖
+          if (!this.dataset.attemptedPlaceholder) {
+            this.dataset.attemptedPlaceholder = '1';
+            this.src = `${LOCAL_ASSETS}/char_placeholder.png`;
+            return;
+          }
+          // 最後退回線上佔位圖
+          this.onerror = null;
+          this.src = 'https://placehold.co/144x144/f9d853/4a6fa5?text=AI';
+        };
+        imgEl.alt = c.name;
+        imgEl.style.width = '100%';
+        imgEl.style.display = 'block';
+
+        el.appendChild(imgEl);
+        const caption = document.createElement('div');
+        caption.className = 'pt-1 text-center font-bold text-sm';
+        caption.textContent = c.name;
+        el.appendChild(caption);
+
         el.onclick=()=>selectCharacter(c);
         cardGrid.appendChild(el);
       });
@@ -999,6 +1049,16 @@ recordBtn.onclick = async () => {
 
         // 顯示辨識結果於輸入框
         charPrompt.value = result || "（語音辨識失敗）";
+
+        // 嘗試上傳錄音與辨識文字到後端並建立記憶
+        try {
+          const created = await uploadRecording(audioBlob, result || '');
+          showToast('✅ 錄音已上傳並建立記憶', { type: 'success' });
+          // 重新載入回憶與時間軸
+          try { await loadMemories(); await renderTimeline(); } catch(e){console.warn(e);}
+        } catch (err) {
+          showToast('❌ 錄音上傳失敗：' + (err.message || ''), { type: 'error' });
+        }
       };
 
       mediaRecorder.start();
@@ -1006,7 +1066,7 @@ recordBtn.onclick = async () => {
       recordBtn.textContent = "🟥 停止";
       isRecording = true;
     } catch (err) {
-  showToast('❌ 無法啟用麥克風，請檢查權限。', { type: 'error' });
+      showToast('❌ 無法啟用麥克風，請檢查權限。', { type: 'error' });
       console.error(err);
     }
   } else {
@@ -1035,6 +1095,15 @@ function setupRecorder(buttonId, targetTextareaId) {
           const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
           const text = await transcribeAudio(audioBlob);
           target.value = text || "（語音辨識失敗）";
+
+          // 上傳錄音與辨識文字到後端
+          try {
+            const created = await uploadRecording(audioBlob, text || '');
+            showToast('✅ 錄音已上傳並建立記憶', { type: 'success' });
+            try { await loadMemories(); await renderTimeline(); } catch(e){console.warn(e);}
+          } catch (err) {
+            showToast('❌ 錄音上傳失敗：' + (err.message || ''), { type: 'error' });
+          }
         };
 
         mediaRecorder.start();
@@ -1042,7 +1111,7 @@ function setupRecorder(buttonId, targetTextareaId) {
         btn.textContent = "🟥 停止";
         isRecording = true;
       } catch (err) {
-    showToast('❌ 無法啟用麥克風權限', { type: 'error' });
+        showToast('❌ 無法啟用麥克風權限', { type: 'error' });
         console.error(err);
       }
     } else {
@@ -1094,7 +1163,7 @@ async function transcribeAudio(audioBlob) {
   } catch (e) {
     console.error("ASR Error:", e);
     // 顯示在手機框內，並提示啟動後端
-    showToast('❌ 語音轉文字失敗，請確認後端服務已啟動（127.0.0.1:8010）', { type: 'error', duration: 4000 });
+    showToast('❌ 語音轉文字失敗，請確認後端服務是否可用（${BACKEND_URL}）', { type: 'error', duration: 4000 });
     return "（語音辨識失敗）";
   }
 }
@@ -1408,7 +1477,7 @@ async function goToMap() {
 }
 let currentOpenId = null; // ✅ 用來記錄目前開啟的小卡 ID
 
-// === 生成時間軸節點（安全 wrapper） ===
+// === 生成時間軸節點（安全 wrapper）===
 async function renderTimeline() {
   try {
     // 使用 loadMemories 作為單一來源（loadMemories 含錯誤 fallback 與 mock）
@@ -1560,6 +1629,7 @@ function openEditModal(memory) {
       });
 
       if (!res.ok) {
+       
         const txt = await res.text();
         throw new Error(txt || '上傳失敗');
       }
@@ -1723,7 +1793,6 @@ try {
 } catch (err) {
   console.error('bind charSend0 -> payModal failed', err);
 }
-
 
 // Debug helper: 檢查 #charSend0 是否被遮蓋，並嘗試將它帶到最上層以恢復可點擊性
 setTimeout(() => {

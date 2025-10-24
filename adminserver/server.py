@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -9,6 +9,8 @@ from typing import Optional, List
 import datetime
 import json
 import time
+from typing import Any
+from fastapi import Request
 
 # -------------- 新增：logging 與明確載入專案根目錄 .env --------------
 # 設定 logger
@@ -139,10 +141,47 @@ admin_frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".
 if os.path.exists(admin_frontend_path):
     app.mount("/static", StaticFiles(directory=admin_frontend_path), name="static")
 
-# 掛載 uploads 靜態檔案，並確保資料夾存在
-uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads"))
+# === ✅ 修正：Vercel 為唯讀系統，改用 /tmp 作為暫存目錄 ===
+if os.getenv("VERCEL_ENV"):
+    # 在 Vercel Serverless 環境中，/var/task 是唯讀的，只能用 /tmp
+    uploads_dir = "/tmp/uploads"
+else:
+    # 本地端開發仍使用原始 uploads 資料夾
+    uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads"))
+
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
+# ===== 新增：data 資料夾與 memories.json 路徑（支援 Vercel /tmp 與本機） =====
+# 支援情境：
+# 1) 若 adminserver/memories.json 已存在 (你現在的情況)，則直接使用該檔案（避免搬移）
+# 2) 否則在 data 或 /tmp/data 建立並初始化 memories.json
+
+admin_local_json = os.path.join(os.path.dirname(__file__), "memories.json")
+
+if os.path.exists(admin_local_json):
+    MEMORIES_JSON_PATH = admin_local_json
+    data_dir = os.path.dirname(MEMORIES_JSON_PATH)
+    logger.info(f"Found existing memories.json in adminserver folder, using: {MEMORIES_JSON_PATH}")
+else:
+    # 先依環境決定 data 資料夾位置
+    if os.getenv("VERCEL_ENV"):
+        data_dir = "/tmp/data"
+    else:
+        data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
+
+    os.makedirs(data_dir, exist_ok=True)
+    MEMORIES_JSON_PATH = os.path.join(data_dir, "memories.json")
+    logger.info(f"No adminserver/memories.json found, using data path: {MEMORIES_JSON_PATH}")
+
+# 如果不存在，建立一個初始的 JSON 檔案（避免讀取時例外）
+if not os.path.exists(MEMORIES_JSON_PATH):
+    try:
+        with open(MEMORIES_JSON_PATH, "w", encoding="utf-8") as f:
+            json.dump({"memories": []}, f, ensure_ascii=False, indent=2)
+        logger.info(f"Initialized memories.json at {MEMORIES_JSON_PATH}")
+    except Exception as e:
+        logger.warning(f"Unable to create memories.json at {MEMORIES_JSON_PATH}: {e}")
 
 # ===== API 端點 =====
 
@@ -298,6 +337,92 @@ async def upload_voice_file(file: UploadFile = File(...), metadata: Optional[str
         logger.exception(f"Error uploading file: {e}")
         raise HTTPException(status_code=500, detail=f"檔案上傳失敗: {str(e)}")
 
+# ===== 新增匯入端點：讓前端可以匯入記憶資料 =====
+
+@app.post("/api/import/memories")
+async def import_memories(records: List[dict] = Body(...)):
+    """
+    匯入記憶（JSON body）
+    範例 body: [ { "text": "...", "lat": 23.5, "lng": 120.9, "place": "台北", "created_at":"2023-10-01T12:00:00" }, ... ]
+    """
+    if not HAVE_MONGO or db is None:
+        raise HTTPException(status_code=400, detail="MongoDB 未啟用。請於環境變數設定 MONGODB_URI 並啟用資料庫。")
+
+    if not isinstance(records, list) or len(records) == 0:
+        raise HTTPException(status_code=400, detail="請提供記憶陣列作為 JSON body。")
+
+    to_insert = []
+    for r in records:
+        rec = {}
+        rec["text"] = r.get("text", "") or r.get("description", "")
+        rec["lat"] = r.get("lat") if "lat" in r else r.get("latitude")
+        rec["lng"] = r.get("lng") if "lng" in r else r.get("longitude")
+        rec["place"] = r.get("place") or r.get("place_name") or r.get("location")
+        rec["photo_url"] = r.get("photo_url", "")
+        # 解析 created_at（若為 ISO 字串）
+        created = r.get("created_at") or r.get("createdAt") or None
+        if isinstance(created, str):
+            try:
+                rec["created_at"] = datetime.datetime.fromisoformat(created)
+            except Exception:
+                try:
+                    # fallback: parse without timezone if present
+                    rec["created_at"] = datetime.datetime.fromisoformat(created.replace("Z", "+00:00"))
+                except Exception:
+                    rec["created_at"] = datetime.datetime.utcnow()
+        elif isinstance(created, (int, float)):
+            rec["created_at"] = datetime.datetime.utcfromtimestamp(float(created))
+        else:
+            rec["created_at"] = datetime.datetime.utcnow()
+
+        # 可攜帶其他欄位
+        rec["meta"] = r.get("meta", {})
+        to_insert.append(rec)
+
+    try:
+        coll = db.memories
+        result = coll.insert_many(to_insert)
+        inserted_ids = [str(i) for i in result.inserted_ids]
+        return {"ok": True, "inserted_count": len(inserted_ids), "ids": inserted_ids}
+    except Exception as e:
+        logger.exception("import_memories failed")
+        raise HTTPException(status_code=500, detail=f"匯入失敗: {str(e)}")
+
+
+@app.post("/api/import/upload-json")
+async def import_memories_file(file: UploadFile = File(...)):
+    """
+    上傳 JSON 檔案並匯入記憶（multipart/form-data）
+    檔案內容應為 JSON 陣列或物件 { "records": [...] }
+    """
+    if not HAVE_MONGO or db is None:
+        raise HTTPException(status_code=400, detail="MongoDB 未啟用。請於環境變數設定 MONGODB_URI 並啟用資料庫。")
+
+    try:
+        content = await file.read()
+        try:
+            payload = json.loads(content)
+        except Exception as jerr:
+            raise HTTPException(status_code=400, detail=f"無法解析 JSON: {jerr}")
+
+        # 支援直接陣列或包在 records 欄位內
+        records = []
+        if isinstance(payload, list):
+            records = payload
+        elif isinstance(payload, dict) and "records" in payload and isinstance(payload["records"], list):
+            records = payload["records"]
+        else:
+            raise HTTPException(status_code=400, detail="JSON 格式錯誤，請傳入陣列或包含 records 欄位的物件。")
+
+        # 重用上方邏輯：簡化呼叫
+        req = await import_memories(records)  # 直接呼叫內部函式（會檢查並寫入）
+        return req
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("import_memories_file failed")
+        raise HTTPException(status_code=500, detail=f"上傳並匯入失敗: {str(e)}")
+
 # ===== 新增：讓 service-worker.js 可從根路徑被取用（避免註冊失敗） =====
 
 @app.get("/service-worker.js")
@@ -315,6 +440,125 @@ async def service_worker_map():
     if os.path.exists(map_path):
         return FileResponse(map_path, media_type="application/json")
     return Response(status_code=404)
+
+# ===== 新增端點：接收文字+位置+照片+錄音，上傳並同步至 MongoDB 與 memories.json =====
+@app.post("/api/save_memory")
+async def save_memory(
+    text: Optional[str] = Form(None),
+    place: Optional[str] = Form(None),
+    lat: Optional[str] = Form(None),
+    lng: Optional[str] = Form(None),
+    photo: Optional[UploadFile] = File(None),
+    audio: Optional[UploadFile] = File(None)
+):
+    """
+    接收表單（multipart/form-data）:
+      - text, place, lat, lng (Form)
+      - photo (file), audio (file)
+    行為：
+      1. 將上傳檔案儲存到 uploads_dir，並產生 /uploads/ 相對 URL
+      2. 將記錄寫入 MongoDB（若可用）或記憶體陣列
+      3. 同步 app 可使用的 memories.json（位於 MEMORIES_JSON_PATH）
+    """
+    try:
+        import uuid
+        from pathlib import Path
+
+        # 解析 lat/lng 為 float（若可）
+        def parse_float(v):
+            try:
+                return float(v) if v not in (None, "", "null") else None
+            except:
+                return None
+
+        lat_val = parse_float(lat)
+        lng_val = parse_float(lng)
+
+        memory = {
+            "text": text or "",
+            "place": place or "",
+            "lat": lat_val,
+            "lng": lng_val,
+            "created_at": datetime.datetime.utcnow().isoformat()
+        }
+
+        # 儲存上傳檔案（若有）
+        saved_files = {}
+        for file_field, upload in (("photo", photo), ("audio", audio)):
+            if upload:
+                original_name = Path(upload.filename).name
+                safe_name = original_name.replace("/", "_").replace("\\", "_")
+                unique_name = f"{uuid.uuid4().hex}_{safe_name}"
+                file_path = os.path.join(uploads_dir, unique_name)
+
+                content = await upload.read()
+                with open(file_path, "wb") as fw:
+                    fw.write(content)
+
+                file_url = f"/uploads/{unique_name}"
+                saved_files[file_field] = {
+                    "original_name": original_name,
+                    "file_path": file_path,
+                    "file_url": file_url,
+                    "size": len(content),
+                    "content_type": upload.content_type
+                }
+                # 將對應欄位加入 memory
+                if file_field == "photo":
+                    memory["photo_url"] = file_url
+                else:
+                    memory["audio_url"] = file_url
+
+                logger.info(f"Saved uploaded {file_field}: {file_path}")
+
+        # 寫入 MongoDB 或記憶體
+        if HAVE_MONGO and db is not None:
+            coll = db.get_collection("memories")
+            # 若資料包含 datetime 物件，轉為 ISO string 前已經處理 created_at
+            insert_doc = memory.copy()
+            result = coll.insert_one(insert_doc)
+            memory["_id"] = str(result.inserted_id)
+            logger.info(f"Inserted memory into MongoDB, id={memory['_id']}")
+        else:
+            # 使用記憶體儲存（確保 _id 欄位）
+            memory["_id"] = f"mem_{len(memory_records)+1}"
+            memory_records.append(memory)
+            logger.info(f"Appended memory to memory_records, id={memory['_id']}")
+
+        # 同步更新 memories.json（simple append，保護性讀寫）
+        try:
+            existing = {"memories": []}
+            if os.path.exists(MEMORIES_JSON_PATH):
+                with open(MEMORIES_JSON_PATH, "r", encoding="utf-8") as rf:
+                    try:
+                        parsed = json.load(rf)
+                        # 支援兩種格式：{"memories": [...]} 或直接陣列
+                        if isinstance(parsed, dict) and "memories" in parsed and isinstance(parsed["memories"], list):
+                            existing = parsed
+                        elif isinstance(parsed, list):
+                            existing = {"memories": parsed}
+                        else:
+                            existing = {"memories": []}
+                    except Exception:
+                        existing = {"memories": []}
+
+            # 準備可序列化的紀錄物件（把 _id / datetime 轉為字串）
+            serializable = {k: (str(v) if isinstance(v, (datetime.datetime, ObjectId)) else v) for k, v in memory.items()}
+
+            existing["memories"].append(serializable)
+
+            with open(MEMORIES_JSON_PATH, "w", encoding="utf-8") as wf:
+                json.dump(existing, wf, ensure_ascii=False, indent=2)
+
+            logger.info(f"Appended memory to memories.json ({MEMORIES_JSON_PATH})")
+        except Exception as jf:
+            logger.exception(f"Failed to update memories.json: {jf}")
+
+        return {"ok": True, "memory": memory}
+
+    except Exception as e:
+        logger.exception("save_memory failed")
+        raise HTTPException(status_code=500, detail=f"儲存失敗: {str(e)}")
 
 # ===== 輔助函數 =====
 
